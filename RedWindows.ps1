@@ -25,7 +25,10 @@ $ErrorActionPreference = 'Stop'
 # =============================================================================
 
 function Write-Status {
-    param([string]$Message, [string]$Color = 'White')
+    param(
+        [string]$Message,
+        [string]$Color = 'White'
+    )
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $Message" -ForegroundColor $Color
 }
 
@@ -61,7 +64,10 @@ function Record-Result {
 # Used verbatim by functions ported in as-is (e.g. New-RangeAdminUser) that
 # expect this helper rather than Write-Status.
 function Write-StatusMessage {
-    param([string]$Message, [string]$Level = 'INFO')
+    param(
+        [string]$Message,
+        [string]$Level = 'INFO'
+    )
     $color = switch ($Level) {
         'WARNING' { 'Yellow' }
         'ERROR'   { 'Red' }
@@ -93,18 +99,16 @@ function Disable-WindowsDefender {
     }
 
     try {
-        $defenderPolicyKey = 'HKLM:\SOFTWARE\Policies\Microsoft\Windows Defender'
-        $realtimePolicyKey = "$defenderPolicyKey\Real-Time Protection"
-        foreach ($key in @($defenderPolicyKey, $realtimePolicyKey)) {
-            if (!(Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
-        }
-        New-ItemProperty -Path $defenderPolicyKey -Name DisableAntiSpyware -Value 1 -PropertyType DWord -Force | Out-Null
-        New-ItemProperty -Path $realtimePolicyKey -Name DisableRealtimeMonitoring -Value 1 -PropertyType DWord -Force | Out-Null
-        Write-Status "[+] Defender registry policy keys set" 'Green'
-        Record-Result -Name 'Windows Defender' -Status Installed -Detail 'disabled (best-effort)'
+        Add-MpPreference -ExclusionPath $script:ToolsRoot -ErrorAction Stop
+        Write-Status "[+] Exclusion added for $script:ToolsRoot" 'Green'
     } catch {
-        Write-Status "[!] Defender registry policy failed: $($_.Exception.Message)" 'Yellow'
-        Record-Result -Name 'Windows Defender' -Status Skipped -Detail $_.Exception.Message
+        Write-Status "[!] Add-MpPreference exclusion failed: $($_.Exception.Message)" 'Yellow'
+    }
+        try {
+        Add-MpPreference -ExclusionPath $script:PayloadRoot -ErrorAction Stop
+        Write-Status "[+] Exclusion added for $script:PayloadRoot" 'Green'
+    } catch {
+        Write-Status "[!] Add-MpPreference exclusion failed: $($_.Exception.Message)" 'Yellow'
     }
 }
 
@@ -163,6 +167,57 @@ function Install-SshServer {
     } catch {
         Write-Status "[!] [OpenSSH Server] failed: $($_.Exception.Message)" 'Yellow'
         Record-Result -Name 'OpenSSH Server' -Status Skipped -Detail $_.Exception.Message
+    }
+}
+
+function Add-PythonFirewallRule {
+    Write-Status "[-] [Python firewall] adding Private/Public allow rules" 'Cyan'
+    try {
+        # Same PATH-staleness issue as Install-PipPackage - Python was just installed via
+        # winget earlier in this same Stage 3 process.
+        Update-SessionPath
+        $python = Get-Command python -ErrorAction SilentlyContinue
+        if (-not $python) {
+            Write-Status "[!] [Python firewall] python is not on PATH - skipping" 'Yellow'
+            Record-Result -Name 'Python firewall' -Status Skipped -Detail 'python not on PATH'
+            return
+        }
+
+        if (!(Get-NetFirewallRule -Name 'Python-In-PrivatePublic' -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule -Name 'Python-In-PrivatePublic' -DisplayName 'Python' -Enabled True -Direction Inbound -Profile Private,Public -Program $python.Source -Action Allow | Out-Null
+        }
+        if (!(Get-NetFirewallRule -Name 'Python-Out-PrivatePublic' -ErrorAction SilentlyContinue)) {
+            New-NetFirewallRule -Name 'Python-Out-PrivatePublic' -DisplayName 'Python' -Enabled True -Direction Outbound -Profile Private,Public -Program $python.Source -Action Allow | Out-Null
+        }
+
+        Write-Status "[+] [Python firewall] rules added" 'Green'
+        Record-Result -Name 'Python firewall' -Status Installed -Detail "allow $($python.Source) (Private,Public)"
+    } catch {
+        Write-Status "[!] [Python firewall] failed: $($_.Exception.Message)" 'Yellow'
+        Record-Result -Name 'Python firewall' -Status Skipped -Detail $_.Exception.Message
+    }
+}
+
+function Install-WindowsUpdates {
+    Write-Status "[-] [Windows Update] checking for updates" 'Cyan'
+    try {
+        Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -ForceBootstrap | Out-Null
+        Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+
+        if (-not (Get-Module -ListAvailable -Name PSWindowsUpdate)) {
+            Install-Module -Name PSWindowsUpdate -Force -Confirm:$false
+        }
+        Import-Module PSWindowsUpdate
+
+        # -IgnoreReboot, not -AutoReboot - Complete-Stage restarts once the rest of Stage 1
+        # (attacker user, autologin, winget, etc.) has finished, not the moment updates land.
+        Install-WindowsUpdate -AcceptAll -IgnoreReboot -Confirm:$false | Out-Null
+
+        Write-Status "[+] [Windows Update] updates installed" 'Green'
+        Record-Result -Name 'Windows Update' -Status Installed -Detail 'PSWindowsUpdate: Install-WindowsUpdate -AcceptAll'
+    } catch {
+        Write-Status "[!] [Windows Update] failed: $($_.Exception.Message)" 'Yellow'
+        Record-Result -Name 'Windows Update' -Status Skipped -Detail $_.Exception.Message
     }
 }
 
@@ -297,11 +352,6 @@ function Set-AutoLogin {
 function Install-Winget {
     Write-Status "[-] [winget] checking for existing installation" 'Cyan'
 
-    # Get-Command -ErrorAction SilentlyContinue is the safe way to probe for a command that
-    # might not exist. Calling `winget` directly when it's not on PATH throws a terminating
-    # CommandNotFoundException during command lookup - before `2>$null` redirection even
-    # applies - which crashes the whole script under $ErrorActionPreference = 'Stop' since
-    # this runs outside any try/catch and Invoke-Stage1 doesn't wrap this call either.
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         $existing = winget --version 2>$null
         if ($existing) {
@@ -327,9 +377,6 @@ function Install-Winget {
             Write-Status "[+] [winget] installed ($verify)" 'Green'
             Record-Result -Name 'winget' -Status Installed -Detail $verify
         } else {
-            # Expected - the App Execution Alias for winget.exe usually isn't
-            # resolvable in the session that just registered it. That's the
-            # whole reason Stage 1 ends with a restart.
             Write-Status "[!] [winget] installed but not yet resolvable in this session - expected, resolves after restart" 'Yellow'
             Record-Result -Name 'winget' -Status Installed -Detail 'installed, pending restart'
         }
@@ -342,16 +389,6 @@ function Install-Winget {
 # =============================================================================
 # Staging / continuation across reboots
 # =============================================================================
-# winget needs a fresh session before its PATH alias resolves, and the same
-# is true of Git's PATH entry right after a winget install - so this script
-# runs in four stages, rebooting into the attacker user's autologon session
-# between each one via a scheduled task that re-invokes this same file.
-#
-# Stage 3 exists for the same reason as Stage 2: Python/Go/Rust/MSYS2/VS2022 all
-# write PATH/environment changes that the *current* process won't see. Installing
-# them there and rebooting before Stage 4 means the whole Get-PackageTable run
-# (pip installs, go/cargo/msbuild builds) sees a fully-resolved environment
-# instead of fighting session-PATH staleness one function at a time.
 
 function Get-RedWindowsStage {
     $stageFile = Join-Path $script:ToolsRoot '.redwindows-stage'
@@ -362,7 +399,9 @@ function Get-RedWindowsStage {
 }
 
 function Set-RedWindowsStage {
-    param([int]$Stage)
+    param(
+        [int]$Stage
+    )
     $stageFile = Join-Path $script:ToolsRoot '.redwindows-stage'
     Set-Content -Path $stageFile -Value $Stage -Force
 }
@@ -376,7 +415,9 @@ function Save-SelfCopy {
 }
 
 function Register-ContinuationTask {
-    param([string]$ScriptPath)
+    param(
+        [string]$ScriptPath
+    )
 
     Write-Status "[-] [Continuation task] registering RedWindowsContinue" 'Cyan'
     try {
@@ -408,7 +449,9 @@ function Unregister-ContinuationTask {
 }
 
 function Complete-Stage {
-    param([int]$NextStage)
+    param(
+        [int]$NextStage
+    )
 
     $selfPath = Save-SelfCopy
     Set-RedWindowsStage -Stage $NextStage
@@ -418,6 +461,7 @@ function Complete-Stage {
     # Flush the transcript to disk before the forced restart kills this process - the next
     # stage's Start-Transcript -Append picks back up in the same file.
     try { Stop-Transcript | Out-Null } catch {}
+    Start-Sleep -Seconds 30
     Restart-Computer -Force
 }
 
@@ -426,21 +470,18 @@ function Complete-Stage {
 # =============================================================================
 
 function Install-WingetPackage {
-    param([string]$Name, [string]$Id)
+    param(
+        [string]$Name, 
+        [string]$Id
+    )
 
-    # Same CommandNotFoundException risk as Install-Winget (see its comment) - this function
-    # is also called directly and unwrapped from Invoke-Stage2 (installing Git), not just via
-    # the try/catch-protected tier closures in Install-AllPackages, so it needs its own guard.
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         Write-Status "[!] [$Name] winget is not on PATH - skipping" 'Yellow'
         return $false
     }
 
     Write-Status "[-] [$Name] winget install $Id" 'Cyan'
-    # 2>$null here, not 2>&1 - merging a native command's stderr into the success stream turns
-    # any line it writes there into a terminating error under $ErrorActionPreference = 'Stop',
-    # even a completely benign one, before $LASTEXITCODE is ever checked. See Install-Pipx for
-    # the confirmed case (pip's harmless PATH warning killed the whole tier this way).
+
     $existing = winget list --id $Id --accept-source-agreements 2>$null
     if ($LASTEXITCODE -eq 0 -and $existing -match [regex]::Escape($Id)) {
         Write-Status "[+] [$Name] already installed" 'DarkGray'
@@ -448,7 +489,8 @@ function Install-WingetPackage {
         return $true
     }
 
-    winget install --id $Id -e --silent --accept-source-agreements --accept-package-agreements *>$null
+    # winget install --id $pkg.Id --source $pkg.Source --exact --silent --accept-source-agreements --accept-package-agreements --disable-interactivity | Out-Null
+    winget install --id $Id -e --accept-source-agreements --accept-package-agreements
     if ($LASTEXITCODE -eq 0) {
         Write-Status "[+] [$Name] installed via winget" 'Green'
         Record-Result -Name $Name -Status Installed -Detail "winget:$Id"
@@ -494,13 +536,24 @@ function Get-GitHubReleaseAsset {
     return $asset
 }
 
+function Get-7ZipPath {
+    $sevenZip = Join-Path $env:ProgramFiles '7-Zip\7z.exe'
+    if (Test-Path $sevenZip) { return $sevenZip }
+    $cmd = Get-Command 7z.exe -ErrorAction SilentlyContinue
+    if ($cmd) { return $cmd.Source }
+    return $null
+}
+
 function Install-GitHubReleaseAsset {
     param(
         [string]$Name,
         [string]$Repo,          # "owner/repo"
         [string]$AssetPattern,  # wildcard match against release asset file names
         [string]$Tag,           # optional - a specific tag instead of the latest release
-        [switch]$ExtractZip
+        [switch]$ExtractZip,
+        # For .7z assets - Expand-Archive can't touch these, so shell out to 7-Zip
+        # (installed elsewhere in Get-PackageTable) instead.
+        [switch]$Extract7z
     )
 
     $asset = Get-GitHubReleaseAsset -Name $Name -Repo $Repo -AssetPattern $AssetPattern -Tag $Tag
@@ -515,7 +568,19 @@ function Install-GitHubReleaseAsset {
     }
 
     $destDir = Join-Path $script:BinRoot $Name
-    if ($ExtractZip) {
+    if ($Extract7z) {
+        $sevenZip = Get-7ZipPath
+        if (-not $sevenZip) {
+            Write-Status "[!] [$Name] downloaded but 7-Zip is not available - install 7-Zip to extract this" 'Yellow'
+            return $false
+        }
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        & $sevenZip x $destFile "-o$destDir" -y *>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [$Name] 7z extraction failed (exit $LASTEXITCODE)" 'Yellow'
+            return $false
+        }
+    } elseif ($ExtractZip) {
         try {
             Expand-Archive -Path $destFile -DestinationPath $destDir -Force
         } catch {
@@ -536,31 +601,51 @@ function Install-GitHubReleaseAsset {
 # Tier 3: git clone + build from source
 # =============================================================================
 
-function Get-MSBuildPath {
-    $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+function Find-MSBuildExe {
+    # vswhere ships with every VS2022 install (fixed path regardless of edition/locale) -
+    # use it to find the real Framework-hosted MSBuild.exe, which Fody-weaved legacy
+    # projects need (dotnet build hosts MSBuild on .NET Core and can't load Fody's
+    # Framework-only task assemblies, e.g. Mono.Cecil).
+    $vswhere = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
     if (Test-Path $vswhere) {
-        $vsPath = & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find MSBuild\**\Bin\MSBuild.exe 2>$null | Select-Object -First 1
-        if ($vsPath) { return $vsPath }
+        $msbuildPath = & $vswhere -latest -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' 2>$null | Select-Object -First 1
+        if ($msbuildPath -and (Test-Path $msbuildPath)) { return $msbuildPath }
     }
-    $cmd = Get-Command msbuild.exe -ErrorAction SilentlyContinue
-    if ($cmd) { return $cmd.Source }
+    $fallback = 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\bin\MSBuild.exe'
+    if (Test-Path $fallback) { return $fallback }
     return $null
 }
 
-function Add-LegacyReferenceAssemblies {
-    param([string]$CloneDir)
+function Register-NuGetOrgSource {
+    $existing = dotnet nuget list source 2>$null
+    if ($existing -match 'nuget\.org') { return }
 
-    # VS2022's installer no longer offers targeting packs for v3.5/v4.0/v4.5/v4.5.1/v4.5.2
-    # (see Install-VS2022Components), so old-style csproj files pinned to those
-    # TargetFrameworkVersions fail to restore/build. The Microsoft.NETFramework.ReferenceAssemblies
-    # NuGet packages ship the same reference assemblies and work with PackageReference-based
-    # restore regardless of SDK-style vs legacy csproj, so patch one in wherever it's needed.
+    Write-Status "[-] [NuGet] registering nuget.org package source" 'Cyan'
+    dotnet nuget add source 'https://api.nuget.org/v3/index.json' -n nuget.org *>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "[!] [NuGet] failed to register nuget.org source" 'Yellow'
+    }
+}
+
+function Add-LegacyReferenceAssemblies {
+    param(
+        [string]$CloneDir
+    )
+
     $packMap = @{
         'v3.5'   = 'net35'
         'v4.0'   = 'net40'
         'v4.5'   = 'net45'
         'v4.5.1' = 'net451'
         'v4.5.2' = 'net452'
+        'v4.6'   = 'net46'
+        'v4.6.1' = 'net461'
+        'v4.6.2' = 'net462'
+        'v4.7'   = 'net47'
+        'v4.7.1' = 'net471'
+        'v4.7.2' = 'net472'
+        'v4.8'   = 'net48'
+        'v4.8.1' = 'net481'
     }
     $refVersion = '1.0.3'
 
@@ -594,40 +679,239 @@ function Add-LegacyReferenceAssemblies {
     }
 }
 
+function Repair-WinRTHintPaths {
+    param(
+        [string]$CloneDir
+    )
+
+    # Some tools (e.g. SharpClipHistory) hardcode a HintPath to a specific Windows SDK
+    # WinRT contract version (Windows Kits\10\References\<sdkver>\<contract>\<cver>\...winmd).
+    # If that exact SDK isn't installed, the reference silently fails to resolve and the
+    # build picks up a conflicting WinRT projection elsewhere, causing a type-forwarder
+    # cycle. Repoint stale HintPaths at whatever contract version is actually installed.
+    $refRoot = 'C:\Program Files (x86)\Windows Kits\10\References'
+    if (-not (Test-Path $refRoot)) { return }
+
+    $pattern = 'Windows Kits\\10\\References\\(?<sdkver>[\d.]+)\\(?<contract>[\w.]+)\\(?<cver>[\d.]+)\\(?<contract2>[\w.]+)\.winmd'
+    $installedSdkDirs = Get-ChildItem -Path $refRoot -Directory -ErrorAction SilentlyContinue | Sort-Object { [version]$_.Name } -Descending
+
+    try {
+        Get-ChildItem -Path $CloneDir -Filter '*.csproj' -Recurse | ForEach-Object {
+            $content = Get-Content -Path $_.FullName -Raw
+            $changed = $false
+
+            foreach ($match in [regex]::Matches($content, $pattern)) {
+                $sdkver    = $match.Groups['sdkver'].Value
+                $contract  = $match.Groups['contract'].Value
+                $cver      = $match.Groups['cver'].Value
+                $contract2 = $match.Groups['contract2'].Value
+                $oldSuffix = "$sdkver\$contract\$cver\$contract2.winmd"
+
+                if (Test-Path (Join-Path $refRoot $oldSuffix)) { continue }
+
+                $newSuffix = $null
+                foreach ($sdkDir in $installedSdkDirs) {
+                    $contractDir = Join-Path $sdkDir.FullName $contract
+                    if (-not (Test-Path $contractDir)) { continue }
+                    $bestVer = Get-ChildItem -Path $contractDir -Directory -ErrorAction SilentlyContinue |
+                        Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+                    if (-not $bestVer) { continue }
+                    if (Test-Path (Join-Path $bestVer.FullName "$contract2.winmd")) {
+                        $newSuffix = "$($sdkDir.Name)\$contract\$($bestVer.Name)\$contract2.winmd"
+                        break
+                    }
+                }
+
+                if (-not $newSuffix) {
+                    Write-Status "[!] [$($_.BaseName)] no installed SDK provides $contract - build may fail" 'Yellow'
+                    continue
+                }
+
+                $content = $content.Replace($oldSuffix, $newSuffix)
+                $changed = $true
+                Write-Status "[-] [$($_.BaseName)] $contract`: $sdkver -> $(($newSuffix -split '\\')[0])" 'DarkGray'
+            }
+
+            if ($changed) {
+                Set-Content -Path $_.FullName -Value $content -NoNewline
+            }
+        }
+    } catch {
+        Write-Status "[!] WinRT HintPath repair failed: $($_.Exception.Message)" 'Yellow'
+    }
+}
+
+function Test-HasLegacyPackageReferences {
+    param(
+        [string]$CloneDir
+    )
+
+    return [bool](Get-ChildItem -Path $CloneDir -Filter '*.csproj' -Recurse -ErrorAction SilentlyContinue | Where-Object {
+        (Get-Content -Path $_.FullName -Raw) -match '\\packages\\[A-Za-z0-9_.\-]+?\.\d+\.\d+\.\d+'
+    })
+}
+
+function Test-HasComReferences {
+    param(
+        [string]$CloneDir
+    )
+
+    # <COMReference> (the ResolveComReference task, e.g. SharpRDP's MSTSCLib ActiveX
+    # reference) can't run under dotnet build's .NET-Core-hosted MSBuild either.
+    return [bool](Get-ChildItem -Path $CloneDir -Filter '*.csproj' -Recurse -ErrorAction SilentlyContinue | Where-Object {
+        (Get-Content -Path $_.FullName -Raw) -match '<COMReference\b'
+    })
+}
+
+function Test-HasResxResources {
+    param(
+        [string]$CloneDir
+    )
+
+    # The classic GenerateResource task needs an x86 task host that dotnet build's
+    # .NET-Core-hosted MSBuild can't spawn (e.g. Whisker's DSInternals Resources.resx),
+    # regardless of the project's own PlatformTarget.
+    return [bool](Get-ChildItem -Path $CloneDir -Filter '*.csproj' -Recurse -ErrorAction SilentlyContinue | Where-Object {
+        (Get-Content -Path $_.FullName -Raw) -match '<EmbeddedResource\b[^>]*\.resx"'
+    })
+}
+
+function Test-IsClassicProject {
+    param(
+        [string]$CloneDir
+    )
+
+    # Old-style (non-SDK) .csproj files are far more reliable under the real Framework
+    # MSBuild.exe than dotnet build's SDK-hosted MSBuild, which has repeatedly shown gaps
+    # for these beyond the specific patterns above - e.g. ThreatCheck's plain
+    # <PackageReference> resolved into project.assets.json fine but never made it onto
+    # the compile line under `dotnet build`. Treat any non-SDK-style project as legacy.
+    return [bool](Get-ChildItem -Path $CloneDir -Filter '*.csproj' -Recurse -ErrorAction SilentlyContinue | Where-Object {
+        (Get-Content -Path $_.FullName -Raw) -notmatch '<Project\s+Sdk='
+    })
+}
+
+function Repair-StandInCosturaFody {
+    param(
+        [string]$CloneDir
+    )
+
+    # StandIn pins Costura.Fody 1.6.2, which packages.config itself flags
+    # requireReinstallation="true" - it's incompatible with the Fody 2.5.0 it's also
+    # pinned to (Mono.Cecil version mismatch at weave time: "Could not load file or
+    # assembly 'Mono.Cecil, Version=0.10.0.0...'"). Bump both to a known-good pair
+    # (Costura.Fody 4.1.0 / Fody 6.0.0) and repoint the hardcoded paths accordingly.
+    $target = Get-ChildItem -Path $CloneDir -Filter '*.csproj' -Recurse -ErrorAction SilentlyContinue | Where-Object {
+        (Get-Content -Path $_.FullName -Raw) -match 'Costura\.Fody\.1\.6\.2'
+    } | Select-Object -First 1
+    if (-not $target) { return }
+
+    Write-Status "[-] [$($target.BaseName)] pinned Costura.Fody 1.6.2 is broken - bumping to Costura.Fody 4.1.0 / Fody 6.0.0" 'DarkGray'
+
+    $content = Get-Content -Path $target.FullName -Raw
+    $content = $content.Replace(
+        'Costura.Fody.1.6.2\lib\portable-net+sl+win+wpa+wp\Costura.dll',
+        'Costura.Fody.4.1.0\lib\net40\Costura.dll'
+    )
+    $content = $content.Replace('Fody.2.5.0\build\Fody.targets', 'Fody.6.0.0\build\Fody.targets')
+    $content = $content.Replace(
+        'Costura.Fody.1.6.2\build\portable-net+sl+win+wpa+wp\Costura.Fody.targets',
+        'Costura.Fody.4.1.0\build\Costura.Fody.props'
+    )
+    Set-Content -Path $target.FullName -Value $content -NoNewline
+}
+
+function Restore-LegacyHintPathPackages {
+    param(
+        [string]$CloneDir
+    )
+
+    # Some tools (e.g. SharPersist) reference NuGet packages via plain <Reference HintPath>
+    # pointing into a ..\packages\<Id>.<Version>\ folder but never shipped a packages.config,
+    # so nothing ever restores them. Derive the package id/version straight from the
+    # HintPath and nuget-install whatever's missing.
+    $pattern = 'packages\\(?<pkg>[A-Za-z0-9_.\-]+?)\.(?<ver>\d+\.\d+\.\d+(?:\.\d+)?)\\'
+    $seen = @{}
+
+    Get-ChildItem -Path $CloneDir -Filter '*.csproj' -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+        $content = Get-Content -Path $_.FullName -Raw
+        $packagesDir = Join-Path $_.DirectoryName '..\packages'
+
+        foreach ($match in [regex]::Matches($content, $pattern)) {
+            $pkgId  = $match.Groups['pkg'].Value
+            $pkgVer = $match.Groups['ver'].Value
+            $key = "$pkgId.$pkgVer"
+            if ($seen.ContainsKey($key)) { continue }
+            $seen[$key] = $true
+
+            if (Test-Path (Join-Path $packagesDir $key)) { continue }
+
+            Write-Status "[-] [$($_.BaseName)] restoring dangling reference $key (no packages.config)" 'Cyan'
+            nuget install $pkgId -Version $pkgVer -OutputDirectory $packagesDir -NonInteractive *>$null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Status "[!] [$($_.BaseName)] nuget install $key failed (exit $LASTEXITCODE)" 'Yellow'
+            }
+        }
+    }
+}
+
 function Install-FromSourceDotNet {
     param(
         [string]$Name,
         [string]$Repo,
         [string]$DestRoot = $script:ToolsRoot,
-        # Relative path (from $cloneDir) to a specific .sln/.csproj - needed for repos where a
-        # recursive *.sln search would find no solution at all, or would find the wrong one
-        # among several (e.g. KeeThief ships 3 unrelated .sln files alongside the real one).
         [string]$SlnPath,
-        # MSBuild /p:Platform override - needed for repos that pin their Release config to a
-        # specific platform (e.g. SharpMapExec/SharpSCCM build Release|x64 only, not AnyCPU).
-        [string]$Platform
+        [string]$Platform,
+        [string]$Ref
     )
 
     $cloneDir = Join-Path $DestRoot $Name
-    Write-Status "[-] [$Name] git clone $Repo" 'Cyan'
+    Write-Status "[-] [$Name] git clone $Repo -> $cloneDir" 'Cyan'
     try {
         if (Test-Path $cloneDir) {
-            git -C $cloneDir pull --quiet
+            if ($Ref) {
+                Write-Status "[-] [$Name] git fetch" 'Cyan'
+                git -C $cloneDir fetch
+            } else {
+                Write-Status "[-] [$Name] git pull" 'Cyan'
+                git -C $cloneDir pull
+            }
         } else {
-            git clone --quiet "https://github.com/$Repo.git" $cloneDir
+            git clone "https://github.com/$Repo.git" $cloneDir
+        }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
+            return $false
         }
     } catch {
         Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
         return $false
     }
 
-    Add-LegacyReferenceAssemblies -CloneDir $cloneDir
+    if ($Ref) {
+        Write-Status "[-] [$Name] checking out pinned ref $Ref" 'Cyan'
+        git -C $cloneDir checkout $Ref
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [$Name] failed to checkout pinned ref '$Ref' (exit $LASTEXITCODE)" 'Yellow'
+            return $false
+        }
+    }
+    $headSha = (git -C $cloneDir rev-parse --short HEAD 2>$null)
+    Write-Status "[-] [$Name] at commit $headSha" 'Cyan'
 
-    $msbuild = Get-MSBuildPath
-    if (-not $msbuild) {
-        Write-Status "[!] [$Name] cloned but MSBuild is not available - install Visual Studio Build Tools to build it" 'Yellow'
+    Add-LegacyReferenceAssemblies -CloneDir $cloneDir
+    Repair-WinRTHintPaths -CloneDir $cloneDir
+    Repair-StandInCosturaFody -CloneDir $cloneDir
+
+    # Same PATH-staleness issue as Install-PipPackage - the .NET SDK was just installed via
+    # winget earlier in this same Stage 3 process.
+    Update-SessionPath
+    if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
+        Write-Status "[!] [$Name] cloned but the .NET SDK is not available - install it to build this" 'Yellow'
         return $false
     }
+
+    Register-NuGetOrgSource
 
     if ($SlnPath) {
         $projectFile = Join-Path $cloneDir $SlnPath
@@ -647,12 +931,53 @@ function Install-FromSourceDotNet {
             return $false
         }
     }
+    Write-Status "[-] [$Name] using project file $($projectFile.FullName)" 'Cyan'
 
-    $msbuildArgs = @($projectFile.FullName, '/p:Configuration=Release', '/t:Restore,Build', '/verbosity:quiet')
-    if ($Platform) { $msbuildArgs += "/p:Platform=$Platform" }
+    $packagesConfig = Get-ChildItem -Path $cloneDir -Filter 'packages.config' -Recurse -ErrorAction SilentlyContinue
+    $hasLegacyHintPaths = Test-HasLegacyPackageReferences -CloneDir $cloneDir
+    $hasComReferences = Test-HasComReferences -CloneDir $cloneDir
+    $hasResxResources = Test-HasResxResources -CloneDir $cloneDir
+    $isClassicProject = Test-IsClassicProject -CloneDir $cloneDir
+    $useMsbuildExe = $false
+    if ($packagesConfig -or $hasLegacyHintPaths -or $hasComReferences -or $hasResxResources -or $isClassicProject) {
+        Write-Status "[-] [$Name] legacy project (packages.config: $([bool]$packagesConfig), HintPath refs: $hasLegacyHintPaths, COM refs: $hasComReferences, .resx: $hasResxResources, non-SDK: $isClassicProject)" 'Cyan'
+        Get-ChildItem -Path $cloneDir -Include 'obj', 'bin' -Recurse -Directory -ErrorAction SilentlyContinue |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
-    Write-Status "[-] [$Name] building $($projectFile.Name)" 'Cyan'
-    & $msbuild @msbuildArgs
+        if (Get-Command nuget -ErrorAction SilentlyContinue) {
+            if ($hasLegacyHintPaths) { Restore-LegacyHintPathPackages -CloneDir $cloneDir }
+
+            Write-Status "[-] [$Name] nuget restore $($projectFile.Name)" 'Cyan'
+            nuget restore $projectFile.FullName -NonInteractive -Verbosity normal
+            if ($LASTEXITCODE -ne 0) {
+                Write-Status "[!] [$Name] nuget restore failed (exit $LASTEXITCODE)" 'Yellow'
+                return $false
+            }
+        } else {
+            Write-Status "[!] [$Name] legacy project but nuget is not on PATH - build will likely fail" 'Yellow'
+        }
+
+        $msbuildExe = Find-MSBuildExe
+        if ($msbuildExe) {
+            $useMsbuildExe = $true
+        } else {
+            Write-Status "[!] [$Name] legacy project but MSBuild.exe not found (needs Visual Studio) - falling back to dotnet build, may fail" 'Yellow'
+        }
+    }
+
+    if ($useMsbuildExe) {
+        $buildArgs = @($projectFile.FullName, '/p:Configuration=Release', '/verbosity:minimal')
+        if ($Platform) { $buildArgs += "/p:Platform=$Platform" }
+
+        Write-Status "[-] [$Name] building: $msbuildExe $($buildArgs -join ' ')" 'Cyan'
+        & $msbuildExe @buildArgs
+    } else {
+        $buildArgs = @($projectFile.FullName, '-c', 'Release', '--verbosity', 'minimal')
+        if ($Platform) { $buildArgs += "-p:Platform=$Platform" }
+
+        Write-Status "[-] [$Name] building: dotnet build $($buildArgs -join ' ')" 'Cyan'
+        dotnet build @buildArgs
+    }
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [$Name] build failed (exit $LASTEXITCODE)" 'Yellow'
         return $false
@@ -664,7 +989,14 @@ function Install-FromSourceDotNet {
 }
 
 function Install-GitCloneOnly {
-    param([string]$Name, [string]$Repo, [string]$DestRoot = $script:ToolsRoot)
+    param(
+        [string]$Name,
+        [string]$Repo,
+        [string]$DestRoot = $script:ToolsRoot,
+        # Installs the repo's requirements.txt via pip after cloning - needed for script
+        # tools (e.g. SuperMega) that ship Python dependencies alongside the source.
+        [switch]$PipRequirements
+    )
 
     $cloneDir = Join-Path $DestRoot $Name
     Write-Status "[-] [$Name] git clone $Repo (script tool, no build needed)" 'Cyan'
@@ -679,22 +1011,42 @@ function Install-GitCloneOnly {
         return $false
     }
 
+    if ($PipRequirements) {
+        $reqFile = Join-Path $cloneDir 'requirements.txt'
+        if (Test-Path $reqFile) {
+            Update-SessionPath
+            if (Get-Command python -ErrorAction SilentlyContinue) {
+                Write-Status "[-] [$Name] pip install -r requirements.txt" 'Cyan'
+                python -m pip install --quiet --upgrade -r $reqFile *>$null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Status "[!] [$Name] pip install -r requirements.txt failed (exit $LASTEXITCODE)" 'Yellow'
+                }
+            } else {
+                Write-Status "[!] [$Name] python is not on PATH - skipping requirements.txt" 'Yellow'
+            }
+        }
+    }
+
     Write-Status "[+] [$Name] cloned to $cloneDir" 'Green'
     Record-Result -Name $Name -Status Installed -Detail "git-clone:$Repo"
     return $true
 }
 
 function Update-SessionPath {
-    # winget/rustup/etc. write their PATH additions to the registry (Machine/User scope), but
-    # a process that's already running - like this script, mid-Stage-3 - won't see them until
-    # something re-reads and re-joins those values into the live $env:Path.
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $userPath    = [Environment]::GetEnvironmentVariable('Path', 'User')
     $env:Path = @($machinePath, $userPath) -join ';'
 }
 
 function Install-FromSourceGo {
-    param([string]$Name, [string]$Repo, [string]$DestRoot = $script:ToolsRoot)
+    param(
+        [string]$Name,
+        [string]$Repo,
+        [string]$DestRoot = $script:ToolsRoot,
+        # Build-time env vars - needed for repos that require cross-compile settings
+        # (e.g. go-cookie-monster needs CGO_ENABLED/GOARCH/GOOS set explicitly).
+        [hashtable]$Env
+    )
 
     $cloneDir = Join-Path $DestRoot $Name
     Write-Status "[-] [$Name] git clone $Repo" 'Cyan'
@@ -718,7 +1070,13 @@ function Install-FromSourceGo {
     $outExe = Join-Path $cloneDir "$Name.exe"
     Write-Status "[-] [$Name] go build" 'Cyan'
     Push-Location $cloneDir
+    $savedEnv = @{}
     try {
+        foreach ($key in $Env.Keys) {
+            $savedEnv[$key] = [Environment]::GetEnvironmentVariable($key)
+            Set-Item -Path "Env:$key" -Value $Env[$key]
+        }
+
         # *>$null, not 2>&1 - see the comment in Install-WingetPackage. go build routinely
         # writes non-fatal notices (module downloads, deprecation warnings) to stderr.
         go build -o $outExe . *>$null
@@ -727,6 +1085,13 @@ function Install-FromSourceGo {
             return $false
         }
     } finally {
+        foreach ($key in $savedEnv.Keys) {
+            if ($null -eq $savedEnv[$key]) {
+                Remove-Item -Path "Env:$key" -ErrorAction SilentlyContinue
+            } else {
+                Set-Item -Path "Env:$key" -Value $savedEnv[$key]
+            }
+        }
         Pop-Location
     }
 
@@ -735,8 +1100,37 @@ function Install-FromSourceGo {
     return $true
 }
 
+function Install-GoInstall {
+    param(
+        [string]$Name,
+        [string]$Package  # e.g. "github.com/OJ/gobuster/v3@latest"
+    )
+
+    Update-SessionPath
+    if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
+        Write-Status "[!] [$Name] go toolchain is not on PATH - install Go first" 'Yellow'
+        return $false
+    }
+
+    Write-Status "[-] [$Name] go install $Package" 'Cyan'
+    go install $Package *>$null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "[!] [$Name] go install failed (exit $LASTEXITCODE)" 'Yellow'
+        return $false
+    }
+
+    Write-Status "[+] [$Name] installed via go install" 'Green'
+    Record-Result -Name $Name -Status Installed -Detail "go-install:$Package"
+    return $true
+}
+
 function Install-FromSourceRust {
-    param([string]$Name, [string]$Repo, [string]$DestRoot = $script:ToolsRoot)
+    param(
+        [string]$Name,
+        [string]$Repo,
+        [string]$DestRoot = $script:ToolsRoot,
+        [string]$Target
+    )
 
     $cloneDir = Join-Path $DestRoot $Name
     Write-Status "[-] [$Name] git clone $Repo" 'Cyan'
@@ -758,13 +1152,28 @@ function Install-FromSourceRust {
         return $false
     }
 
-    Write-Status "[-] [$Name] cargo build --release" 'Cyan'
+    $cargoArgs = @('build', '--release')
+    $outDir = "$cloneDir\target\release"
+    if ($Target) {
+        $rustup = Get-Command rustup -ErrorAction SilentlyContinue
+        if (-not $rustup) {
+            Write-Status "[!] [$Name] cloned but rustup is not on PATH - install Rust first" 'Yellow'
+            return $false
+        }
+        & $rustup.Source target add $Target *>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [$Name] rustup target add $Target failed (exit $LASTEXITCODE)" 'Yellow'
+            return $false
+        }
+        # $cargoArgs += @('--target', $Target)
+        # $outDir = "$cloneDir\target\$Target\release"
+
+    }
+
+    Write-Status "[-] [$Name] cargo $($cargoArgs -join ' ')" 'Cyan'
     Push-Location $cloneDir
     try {
-        # *>$null, not 2>&1 - see the comment in Install-WingetPackage. cargo writes its normal
-        # build progress ("Compiling foo v0.1.0", etc.) to stderr by design on every build,
-        # success or not, so 2>&1 here would fail this tier unconditionally.
-        & $cargo.Source build --release *>$null
+        cargo build --target $Target --release
         if ($LASTEXITCODE -ne 0) {
             Write-Status "[!] [$Name] cargo build failed (exit $LASTEXITCODE)" 'Yellow'
             return $false
@@ -773,18 +1182,17 @@ function Install-FromSourceRust {
         Pop-Location
     }
 
-    Write-Status "[+] [$Name] built from source at $cloneDir\target\release" 'Green'
+    Write-Status "[+] [$Name] built from source at $outDir" 'Green'
     Record-Result -Name $Name -Status Installed -Detail "source-build-rust:$Repo"
     return $true
 }
 
 function Install-PipPackage {
-    param([string]$Name, [string]$PipName)
+    param(
+        [string]$Name,
+        [string]$PipName
+    )
 
-    # Python is installed via winget earlier in this same Stage 3 process. Without refreshing
-    # $env:Path here, bare `python` resolves to the Windows Store's App Execution Alias stub
-    # (not the real interpreter winget just installed) and errors with "Python was not found" -
-    # same class of just-installed-this-session PATH staleness as the Go/Rust build tiers.
     Update-SessionPath
     if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
         Write-Status "[!] [$Name] python is not on PATH - skipping" 'Yellow'
@@ -792,9 +1200,7 @@ function Install-PipPackage {
     }
 
     Write-Status "[-] [$Name] pip install $PipName" 'Cyan'
-    # *>$null, not 2>&1 - see the comment in Install-WingetPackage. pip routinely writes
-    # harmless warnings to stderr (e.g. "script X is not on PATH") that would otherwise fail
-    # this tier even on an install that fully succeeded.
+
     python -m pip install --quiet --upgrade $PipName *>$null
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [$Name] pip install failed (exit $LASTEXITCODE)" 'Yellow'
@@ -814,13 +1220,9 @@ function Install-Pipx {
         return $false
     }
 
-    Write-Status "[-] [pipx] pip install --user pipx" 'Cyan'
-    # *>$null, not 2>&1 - see the comment in Install-PipPackage/Install-WingetPackage. This
-    # exact line is what was actually killing pipx (and, by the same path, Impacket/NetExec
-    # further down the table): pip's harmless "script X is not on PATH" warning on stderr was
-    # getting promoted to a terminating error under $ErrorActionPreference = 'Stop' before
-    # $LASTEXITCODE was ever checked, even though the pip install itself succeeded.
-    python -m pip install --quiet --upgrade --user pipx *>$null
+    Write-Status "[-] [pipx] pip install pipx" 'Cyan'
+
+    python -m pip install pipx
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [pipx] pip install failed (exit $LASTEXITCODE)" 'Yellow'
         return $false
@@ -833,41 +1235,47 @@ function Install-Pipx {
     return $true
 }
 
-# =============================================================================
-# Bespoke installers (don't fit the winget/GitHub-release/source-build shape)
-# =============================================================================
+function Install-PipxPackage {
+    param(
+        [string]$Name,
+        [string]$PipxUrl
+    )
 
-function Install-Rust {
-    $rustup    = Join-Path $script:DlRoot 'rustup-init.exe'
-    $rustc     = Join-Path $env:USERPROFILE '.cargo\bin\rustc.exe'
-    $rustupDir = Join-Path $env:USERPROFILE '.rustup'
-
-    if (Test-Path $rustc) {
-        Write-Status "[+] [Rust] already installed" 'DarkGray'
-        Record-Result -Name 'Rust' -Status Installed -Detail 'already present'
-        return $true
-    }
-
-    if (Test-Path $rustupDir) {
-        Remove-Item -Path $rustupDir -Recurse -Force
-    }
-
-    Write-Status "[-] [Rust] downloading rustup-init.exe" 'Cyan'
-    try {
-        Invoke-WebRequest -Uri 'https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe' -OutFile $rustup -UseBasicParsing
-    } catch {
-        Write-Status "[!] [Rust] download failed: $($_.Exception.Message)" 'Yellow'
+    Update-SessionPath
+    if (-not (Get-Command pipx -ErrorAction SilentlyContinue)) {
+        Write-Status "[!] [$Name] pipx is not on PATH - skipping" 'Yellow'
         return $false
     }
 
-    & $rustup -q -y
+    Write-Status "[-] [$Name] pipx install $PipxUrl" 'Cyan'
+
+    pipx install $PipxUrl *>$null
     if ($LASTEXITCODE -ne 0) {
-        Write-Status "[!] [Rust] rustup-init failed (exit $LASTEXITCODE)" 'Yellow'
+        Write-Status "[!] [$Name] pipx install failed (exit $LASTEXITCODE)" 'Yellow'
         return $false
     }
 
-    Write-Status "[+] [Rust] installed via rustup" 'Green'
-    Record-Result -Name 'Rust' -Status Installed -Detail 'rustup-init'
+    Write-Status "[+] [$Name] installed via pipx" 'Green'
+    Record-Result -Name $Name -Status Installed -Detail "pipx:$PipxUrl"
+    return $true
+}
+
+function Install-ChooseNim {
+    Update-SessionPath
+    if (-not (Get-Command choosenim -ErrorAction SilentlyContinue)) {
+        Write-Status "[!] [ChooseNim] choosenim is not on PATH - install it via winget first" 'Yellow'
+        return $false
+    }
+
+    Write-Status "[-] [ChooseNim] choosenim stable --firstInstall" 'Cyan'
+    choosenim stable --firstInstall 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "[!] [ChooseNim] 'choosenim stable --firstInstall' failed (exit $LASTEXITCODE)" 'Yellow'
+        return $false
+    }
+
+    Write-Status "[+] [ChooseNim] Nim installed, .nimble\bin added to PATH" 'Green'
+    Record-Result -Name 'ChooseNim' -Status Installed -Detail 'choosenim stable --firstInstall'
     return $true
 }
 
@@ -905,17 +1313,12 @@ function Install-Msys2 {
 }
 
 function Install-MsysToolchain {
-    # MSYS2's usr\bin\bash.exe runs a one-shot command non-interactively with no window to
-    # babysit - unlike ucrt64.exe/mingw64.exe, which are just launchers for an interactive
-    # mintty/conhost shell and aren't meant to be scripted against.
     $bash = 'C:\msys64\usr\bin\bash.exe'
     if (-not (Test-Path $bash)) {
         Write-Status "[!] [MSYS2 toolchain] bash.exe not found - install MSYS2 first" 'Yellow'
         return $false
     }
 
-    # mingw-w64-x86_64-* (classic MinGW64), not mingw-w64-ucrt-x86_64-* (UCRT64) - this matches
-    # the x86_64-w64-mingw32-gcc naming the BOF-building repos in this script's docs expect.
     $mingwGcc = 'C:\msys64\mingw64\bin\gcc.exe'
     if (Test-Path $mingwGcc) {
         Write-Status "[+] [MSYS2 toolchain] already installed" 'DarkGray'
@@ -923,11 +1326,6 @@ function Install-MsysToolchain {
         return $true
     }
 
-    # The first -Syu pass often updates pacman/msys2-runtime itself and, in the interactive
-    # shell, prompts you to close and reopen the terminal before continuing. Each bash.exe
-    # invocation here is already a fresh process, so running it a second time is the
-    # non-interactive equivalent of that restart.
-    #
     Write-Status "[-] [MSYS2 toolchain] pacman -Syu (core update pass 1/2)" 'Cyan'
     C:\msys64\usr\bin\bash.exe -lc 'pacman -Syu --noconfirm --needed' | Out-Null
     Write-Status "[-] [MSYS2 toolchain] pacman -Syu (core update pass 2/2)" 'Cyan'
@@ -945,8 +1343,6 @@ function Install-MsysToolchain {
         return $false
     }
 
-    # Add mingw64\bin to user PATH (and this session) so gcc/cmake resolve for later steps
-    # (Nim's build, ad-hoc BOF compilation) without needing an MSYS2 shell at all.
     $mingwBin = 'C:\msys64\mingw64\bin'
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     $pathEntries = if ($userPath) { $userPath -split ';' } else { @() }
@@ -961,106 +1357,48 @@ function Install-MsysToolchain {
     return $true
 }
 
-function Install-NimFromSource {
-    $nimHome = Join-Path $script:ToolsRoot 'Nim'
-    $nimExe  = Join-Path $nimHome 'bin\nim.exe'
+function Install-NimPackages {
+    $nimPackages = @(
+        'winim',
+        'nimcrypto',
+        'docopt',
+        'psutil',
+        'nimprotect',
+        'supersnappy',
+        'argparse',
+        'ptr_math',
+        'strenc',
+        'libp2p',
+        'ws',
+        'zippy',
+        'iputils',
+        'socks5',
+        'daemon',
+        'tiny_sqlite',
+        'dnsclient'
+    )
 
-    if (Test-Path $nimExe) {
-        Write-Status "[+] [Nim] already built at $nimHome" 'DarkGray'
-        Record-Result -Name 'Nim' -Status Installed -Detail 'already present'
-        return $true
-    }
-
-    # The csources_v2 C bootstrap step needs a C compiler on PATH - gcc (e.g.
-    # from MSYS2's mingw-w64 packages, not installed by Install-Msys2 itself)
-    # or MSVC's cl.exe (needs a Developer shell, not just VS installed).
-    $hasCompiler = (Get-Command gcc -ErrorAction SilentlyContinue) -or (Get-Command cl -ErrorAction SilentlyContinue)
-    if (-not $hasCompiler) {
-        Write-Status "[!] [Nim] no C compiler (gcc/cl) on PATH - install MSYS2's mingw-w64 gcc or run from a VS Developer shell first" 'Yellow'
+    Update-SessionPath
+    if (-not (Get-Command nimble -ErrorAction SilentlyContinue)) {
+        Write-Status "[!] [Nim packages] nimble is not on PATH - install Nim first" 'Yellow'
         return $false
     }
 
-    Write-Status "[-] [Nim] cloning nim-lang/Nim" 'Cyan'
-    try {
-        if (Test-Path $nimHome) {
-            git -C $nimHome pull --quiet
-        } else {
-            git clone --quiet https://github.com/nim-lang/Nim.git $nimHome
-        }
-    } catch {
-        Write-Status "[!] [Nim] git clone failed: $($_.Exception.Message)" 'Yellow'
-        return $false
-    }
-
-    $csourcesDir = Join-Path $nimHome 'csources_v2'
-    if (-not (Test-Path $csourcesDir)) {
-        Write-Status "[-] [Nim] cloning csources_v2 (C bootstrap sources)" 'Cyan'
-        try {
-            git clone --quiet --depth 1 https://github.com/nim-lang/csources_v2.git $csourcesDir
-        } catch {
-            Write-Status "[!] [Nim] csources_v2 clone failed: $($_.Exception.Message)" 'Yellow'
-            return $false
-        }
-    }
-
-    Write-Status "[-] [Nim] building bootstrap compiler (csources_v2\build.bat)" 'Cyan'
-    Push-Location $csourcesDir
-    try {
-        & '.\build.bat'
+    foreach ($pkg in $nimPackages) {
+        Write-Status "[-] [Nim packages] nimble install $pkg" 'Cyan'
+        nimble install -y $pkg 
         if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [Nim] csources build.bat failed (exit $LASTEXITCODE)" 'Yellow'
-            return $false
+            Write-Status "[!] [Nim packages] $pkg failed (exit $LASTEXITCODE)" 'Yellow'
+            Record-Result -Name "Nim package: $pkg" -Status Skipped -Detail "nimble install failed (exit $LASTEXITCODE)"
+            continue
         }
-    } finally {
-        Pop-Location
+        Write-Status "[+] [Nim packages] $pkg installed" 'Green'
+        Record-Result -Name "Nim package: $pkg" -Status Installed -Detail 'nimble'
     }
-
-    Write-Status "[-] [Nim] bootstrapping koch and building the release compiler" 'Cyan'
-    Push-Location $nimHome
-    try {
-        & (Join-Path $nimHome 'bin\nim.exe') c koch
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [Nim] 'nim c koch' failed (exit $LASTEXITCODE)" 'Yellow'
-            return $false
-        }
-
-        & (Join-Path $nimHome 'koch.exe') boot -d:release
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [Nim] 'koch boot' failed (exit $LASTEXITCODE)" 'Yellow'
-            return $false
-        }
-
-        & (Join-Path $nimHome 'koch.exe') tools
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [Nim] 'koch tools' failed (exit $LASTEXITCODE) - core compiler still built, continuing" 'Yellow'
-        }
-    } finally {
-        Pop-Location
-    }
-
-    if (-not (Test-Path $nimExe)) {
-        Write-Status "[!] [Nim] build finished but nim.exe not found at $nimExe" 'Yellow'
-        return $false
-    }
-
-    $nimBin = Join-Path $nimHome 'bin'
-    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $pathEntries = if ($userPath) { $userPath -split ';' } else { @() }
-    if ($pathEntries -notcontains $nimBin) {
-        $newPath = if ($userPath) { "$userPath;$nimBin" } else { $nimBin }
-        [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
-        $env:Path += ";$nimBin"
-    }
-
-    Write-Status "[+] [Nim] built from source at $nimHome, added to user PATH" 'Green'
-    Record-Result -Name 'Nim' -Status Installed -Detail 'source-build:nim-lang/Nim'
-    return $true
 }
 
 function Enable-NetFx35Feature {
-    # VS2022's ".NET Framework 3.5 developer tools" component lets projects target 3.5, but
-    # the CLR 2.0 runtime it needs (and that e.g. KeeThief's ILMerge post-build step hardcodes
-    # a path to) only exists once this Windows feature itself is enabled.
+
     Write-Status "[-] [.NET Framework 3.5] enabling Windows feature" 'Cyan'
     try {
         $feature = Get-WindowsOptionalFeature -Online -FeatureName NetFx3
@@ -1091,9 +1429,6 @@ function Install-VS2022Components {
     }
 
     $vsComponents = @(
-        # Workloads
-        # (no separate VCTools workload - it's a Build Tools SKU id and isn't in Community's
-        # product graph; NativeDesktop already pulls in the C++ toolchain)
         'Microsoft.VisualStudio.Workload.NativeDesktop',
 
         # MSVC toolsets
@@ -1120,27 +1455,12 @@ function Install-VS2022Components {
         'Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Llvm.Clang',
 
         # Build tools
-        'Microsoft.Component.MSBuild', # not VisualStudio.Component.MSBuild
-        # Note: TestTools.BuildTools has no equivalent in Community's product graph
-        # (it's a Build Tools SKU-only id); dropped.
-
-        # Note: Windows10SDK.17763 is no longer offered by the VS2022 installer (current
-        # channel only ships 19041/22621/26100+). SharpClipHistory hardcodes winmd paths
-        # under 17763, so it needs the standalone Windows 10 SDK (17763) installer instead;
-        # that's a known, accepted gap (see Build_Instructions.md).
+        'Microsoft.Component.MSBuild', 
 
         # .NET
         'Microsoft.Net.Component.4.8.SDK',
         'Microsoft.Net.Component.4.7.2.TargetingPack',
 
-        # Older targeting packs needed by GhostPack-style source-build tools
-        # (SharpDPAPI/SharpDump/Sharp-SMBExec/SharpGPOAbuse/SharpUp/DotNetToJScript/KeeThief -> 3.5,
-        # ForgeCert/StandIn/SpoolSample/SharpMapExec/SharpRDP/Sharp-WMIExec -> 4.5,
-        # sharpsh/Group3r -> 4.5.1, SharpView -> 4.5.2, GadgetToJScript -> 4.6.1).
-        # Note: as of the current channel, VS2022's installer offers no targeting pack for
-        # 4.0 and has dropped 4.5/4.5.1/4.5.2 too (4.6.1 is now the oldest one offered).
-        # Add-LegacyReferenceAssemblies covers that gap for source-built tools by patching
-        # in the matching Microsoft.NETFramework.ReferenceAssemblies NuGet package instead.
         'Microsoft.Net.Component.3.5.DeveloperTools',
         'Microsoft.Net.Component.4.6.1.TargetingPack'
     )
@@ -1235,7 +1555,6 @@ function Get-PackageTable {
         # --- Core utilities ---
         @{ Name = 'Sysinternals Suite'; Tiers = @({ Install-WingetPackage 'Sysinternals Suite' 'Microsoft.Sysinternals.Suite' }) }
         @{ Name = '7-Zip';              Tiers = @({ Install-WingetPackage '7-Zip' '7zip.7zip' }) }
-        @{ Name = 'Git';                Tiers = @({ Install-WingetPackage 'Git' 'Git.Git' }) }
         @{ Name = 'Python 3.13';        Tiers = @({ Install-WingetPackage 'Python 3.13' 'Python.Python.3.13' }) }
         @{ Name = 'Go';                 Tiers = @({ Install-WingetPackage 'Go' 'GoLang.Go' }) }
         @{ Name = 'Gitleaks';           Tiers = @({ Install-WingetPackage 'Gitleaks' 'Gitleaks.Gitleaks' }) }
@@ -1245,45 +1564,31 @@ function Get-PackageTable {
         @{ Name = 'DB Browser SQLite';  Tiers = @({ Install-WingetPackage 'DB Browser SQLite' 'DBBrowserForSQLite.DBBrowserForSQLite' }) }
         @{ Name = 'KeePass';            Tiers = @({ Install-WingetPackage 'KeePass' 'DominikReichl.KeePass' }) }
         @{ Name = 'Adobe Acrobat Reader'; Tiers = @({ Install-WingetPackage 'Adobe Acrobat Reader' 'Adobe.Acrobat.Reader.64-bit' }) }
-        @{ Name = 'pipx';               Tiers = @({ Install-Pipx }) }
-        @{ Name = 'Rust';               Tiers = @({ Install-Rust }) }
-        @{ Name = 'MSYS2';              Tiers = @({ Install-Msys2 }) }
-        @{ Name = 'MSYS2 Toolchain';    Tiers = @({ Install-MsysToolchain }) }
-        @{ Name = 'Nim';                Tiers = @({ Install-NimFromSource }) }
-        # @{ Name = 'JDK 17.0.2';       Tiers = @({ Install-Jdk17 }) }
-        @{ Name = 'Visual Studio 2022 Community'; Tiers = @({
-            if (Install-WingetPackage 'Visual Studio 2022 Community' 'Microsoft.VisualStudio.2022.Community') {
-                Install-VS2022Components
-                Enable-NetFx35Feature
-                $true
-            } else {
-                $false
-            }
-          }) }
+        # @{ Name = 'pipx';               Tiers = @({ Install-Pipx }) }
+        @{ Name = 'JDK 17.0.2';       Tiers = @({ Install-Jdk17 }) }
 
         # --- Web proxy / testing ---
         @{ Name = 'Burp Suite Community'; Tiers = @({ Install-WingetPackage 'Burp Suite Community' 'PortSwigger.BurpSuite.Community' }) }
         @{ Name = 'Fiddler Classic';       Tiers = @({ Install-WingetPackage 'Fiddler Classic' 'Telerik.Fiddler.Classic' }) }
 
         # --- Password / hash cracking ---
-        @{ Name = 'Hashcat';   Tiers = @({ Install-GitHubReleaseAsset -Name 'Hashcat' -Repo 'hashcat/hashcat' -AssetPattern '*.7z' }) }
+        @{ Name = 'Hashcat';   Tiers = @({ Install-GitHubReleaseAsset -Name 'Hashcat' -Repo 'hashcat/hashcat' -AssetPattern '*.7z' -Extract7z }) }
 
-        # --- CyberChef (static app, no build needed) ---
-        @{ Name = 'CyberChef'; Tiers = @({ Install-GitHubReleaseAsset -Name 'CyberChef' -Repo 'gchq/CyberChef' -AssetPattern '*.zip' -ExtractZip }) }
-
-        # --- AD / post-exploitation tradecraft ---
         @{ Name = 'SharpHound'; Tiers = @({ Install-GitHubReleaseAsset -Name 'SharpHound' -Repo 'SpecterOps/SharpHound' -AssetPattern '*.zip' -ExtractZip }) }
         @{ Name = 'Rubeus';     Tiers = @({ Install-FromSourceDotNet -Name 'Rubeus' -Repo 'GhostPack/Rubeus' -DestRoot $script:SharpToolsRoot }) }
-        @{ Name = 'Certify';    Tiers = @({ Install-FromSourceDotNet -Name 'Certify' -Repo 'GhostPack/Certify' -DestRoot $script:SharpToolsRoot }) }
+
+        @{ Name = 'Certify';    Tiers = @({ Install-FromSourceDotNet -Name 'Certify' -Repo 'GhostPack/Certify' -DestRoot $script:SharpToolsRoot -Ref 'bee728d' }) }
         @{ Name = 'PowerSploit'; Tiers = @({ Install-GitCloneOnly -Name 'PowerSploit' -Repo 'PowerShellMafia/PowerSploit' }) }
         @{ Name = 'Responder'; Tiers = @({ Install-GitCloneOnly -Name 'Responder' -Repo 'lgandx/Responder' }) }
+        @{ Name = 'ShadowHound'; Tiers = @({ Install-GitCloneOnly -Name 'ShadowHound' -Repo 'Friends-Security/ShadowHound' }) }
 
         # --- Python-based tooling (needs Python installed above first) ---
-        @{ Name = 'Impacket';  Tiers = @({ Install-PipPackage -Name 'Impacket' -PipName 'impacket' }) }
-        @{ Name = 'NetExec';   Tiers = @({ Install-PipPackage -Name 'NetExec' -PipName 'netexec' }) }
+        @{ Name = 'Impacket';  Tiers = @({ Install-PipxPackage -Name 'Impacket' -PipxUrl 'impacket' }) }
+        @{ Name = 'NetExec';   Tiers = @({ Install-PipxPackage -Name 'NetExec' -PipxUrl 'git+https://github.com/Pennyw0rth/NetExec' }) }
+        @{ Name = 'bloodyAD';   Tiers = @({ Install-PipxPackage -Name 'bloodyAD' -PipxUrl 'git+https://github.com/CravateRouge/bloodyAD.git' }) }
 
         # --- DevTools (pinned releases, ported from lab-workstation.yml) ---
-        @{ Name = 'FaceDancer';      Tiers = @({ Install-GitHubReleaseAsset -Name 'FaceDancer' -Repo 'Tylous/FaceDancer' -AssetPattern 'FaceDancer_Windows_amd64.exe' -Tag 'v2.0' }) }
+        @{ Name = 'FaceDancer';      Tiers = @({ Install-FromSourceRust -Name 'FaceDancer' -Repo 'Tylous/FaceDancer' -Target 'x86_64-pc-windows-gnu' }) }
         @{ Name = 'RedTeamGrimoire'; Tiers = @({ Install-GitCloneOnly -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' }) }
         @{ Name = 'swarmer';         Tiers = @({ Install-GitHubReleaseAsset -Name 'swarmer' -Repo 'praetorian-inc/swarmer' -AssetPattern 'swarmer.exe' -Tag 'v0.1.8' }) }
         @{ Name = 'HiveSwarming';    Tiers = @({ Install-GitHubReleaseAsset -Name 'HiveSwarming' -Repo 'stormshield/HiveSwarming' -AssetPattern 'HiveSwarming.exe' -Tag 'v1.6' }) }
@@ -1298,6 +1603,9 @@ function Get-PackageTable {
         @{ Name = 'DelegationBOF';                   Tiers = @({ Install-GitCloneOnly -Name 'DelegationBOF' -Repo 'Crypt0s/DelegationBOF' -DestRoot $script:BofRoot }) }
         @{ Name = 'HandleKatz_BOF';                  Tiers = @({ Install-GitCloneOnly -Name 'HandleKatz_BOF' -Repo 'EspressoCake/HandleKatz_BOF' -DestRoot $script:BofRoot }) }
         @{ Name = 'HOLLOW';                          Tiers = @({ Install-GitCloneOnly -Name 'HOLLOW' -Repo 'boku7/HOLLOW' -DestRoot $script:BofRoot }) }
+        @{ Name = 'injectAmsiBypass';                Tiers = @({ Install-GitCloneOnly -Name 'injectAmsiBypass' -Repo 'boku7/injectAmsiBypass' -DestRoot $script:BofRoot }) }
+        @{ Name = 'injectEtwBypass';                 Tiers = @({ Install-GitCloneOnly -Name 'injectEtwBypass' -Repo 'boku7/injectEtwBypass' -DestRoot $script:BofRoot }) }
+        @{ Name = 'Kerbeus-BOF';                     Tiers = @({ Install-GitCloneOnly -Name 'Kerbeus-BOF' -Repo 'RalfHacker/Kerbeus-BOF' -DestRoot $script:BofRoot }) }
         @{ Name = 'nanorobeus';                      Tiers = @({ Install-GitCloneOnly -Name 'nanorobeus' -Repo 'wavvs/nanorobeus' -DestRoot $script:BofRoot }) }
         @{ Name = 'No-Consolation';                  Tiers = @({ Install-GitCloneOnly -Name 'No-Consolation' -Repo 'fortra/No-Consolation' -DestRoot $script:BofRoot }) }
         @{ Name = 'OperatorsKit';                    Tiers = @({ Install-GitCloneOnly -Name 'OperatorsKit' -Repo 'REDMED-X/OperatorsKit' -DestRoot $script:BofRoot }) }
@@ -1305,6 +1613,7 @@ function Get-PackageTable {
         @{ Name = 'reg_export-BOF';                  Tiers = @({ Install-GitCloneOnly -Name 'reg_export-BOF' -Repo 'Valkyrie-Security/reg_export-BOF' -DestRoot $script:BofRoot }) }
         @{ Name = 'PoolPartyBof';                    Tiers = @({ Install-GitCloneOnly -Name 'PoolPartyBof' -Repo '0xEr3bus/PoolPartyBof' -DestRoot $script:BofRoot }) }
         @{ Name = 'SCShell';                         Tiers = @({ Install-GitCloneOnly -Name 'SCShell' -Repo 'Mr-Un1k0d3r/SCShell' -DestRoot $script:BofRoot }) }
+        @{ Name = 'ServiceMove-BOF';                 Tiers = @({ Install-GitCloneOnly -Name 'ServiceMove-BOF' -Repo 'netero1010/ServiceMove-BOF' -DestRoot $script:BofRoot }) }
         @{ Name = 'secinject';                       Tiers = @({ Install-GitCloneOnly -Name 'secinject' -Repo 'apokryptein/secinject' -DestRoot $script:BofRoot }) }
         @{ Name = 'tgtdelegation';                   Tiers = @({ Install-GitCloneOnly -Name 'tgtdelegation' -Repo 'connormcgarr/tgtdelegation' -DestRoot $script:BofRoot }) }
         @{ Name = 'ThreadlessInject-BOF';            Tiers = @({ Install-GitCloneOnly -Name 'ThreadlessInject-BOF' -Repo 'iilegacyyii/ThreadlessInject-BOF' -DestRoot $script:BofRoot }) }
@@ -1317,8 +1626,6 @@ function Get-PackageTable {
         @{ Name = 'RestrictedAdmin';    Tiers = @({ Install-FromSourceDotNet -Name 'RestrictedAdmin' -Repo 'GhostPack/RestrictedAdmin' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'Sharp-SMBExec';      Tiers = @({ Install-FromSourceDotNet -Name 'Sharp-SMBExec' -Repo 'checkymander/Sharp-SMBExec' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'SharpClipHistory';   Tiers = @({ Install-FromSourceDotNet -Name 'SharpClipHistory' -Repo 'ReversecLabs/SharpClipHistory' -DestRoot $script:SharpToolsRoot }) }
-        # SharpCollection is a meta-repo of many prebuilt tools + its own build
-        # script, not a single .sln - clone only, don't try to MSBuild it.
         @{ Name = 'SharpCollection';    Tiers = @({ Install-GitCloneOnly -Name 'SharpCollection' -Repo 'Flangvik/SharpCollection' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'SharpDPAPI';         Tiers = @({ Install-FromSourceDotNet -Name 'SharpDPAPI' -Repo 'GhostPack/SharpDPAPI' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'SharpDump';          Tiers = @({ Install-FromSourceDotNet -Name 'SharpDump' -Repo 'GhostPack/SharpDump' -DestRoot $script:SharpToolsRoot }) }
@@ -1327,7 +1634,7 @@ function Get-PackageTable {
         @{ Name = 'SharpGPOAbuse';      Tiers = @({ Install-FromSourceDotNet -Name 'SharpGPOAbuse' -Repo 'ReversecLabs/SharpGPOAbuse' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'SharpLAPS';          Tiers = @({ Install-FromSourceDotNet -Name 'SharpLAPS' -Repo 'swisskyrepo/SharpLAPS' -DestRoot $script:SharpToolsRoot }) }
         # Release config is pinned to x64 in this repo, not AnyCPU.
-        @{ Name = 'SharpMapExec';       Tiers = @({ Install-FromSourceDotNet -Name 'SharpMapExec' -Repo 'cube0x0/SharpMapExec' -DestRoot $script:SharpToolsRoot -Platform 'x64' }) }
+        @{ Name = 'SharpMapExec';       Tiers = @({ Install-FromSourceDotNet -Name 'SharpMapExec' -Repo 'cube0x0/SharpMapExec' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'SharpRDP';           Tiers = @({ Install-FromSourceDotNet -Name 'SharpRDP' -Repo '0xthirteen/SharpRDP' -DestRoot $script:SharpToolsRoot }) }
         # Release config is pinned to x64 in this repo, not AnyCPU.
         @{ Name = 'SharpSCCM';          Tiers = @({ Install-FromSourceDotNet -Name 'SharpSCCM' -Repo 'Mayyhem/SharpSCCM' -DestRoot $script:SharpToolsRoot -Platform 'x64' }) }
@@ -1339,21 +1646,18 @@ function Get-PackageTable {
         @{ Name = 'SQLRecon';           Tiers = @({ Install-FromSourceDotNet -Name 'SQLRecon' -Repo 'skahwah/SQLRecon' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'StandIn';            Tiers = @({ Install-FromSourceDotNet -Name 'StandIn' -Repo 'FuzzySecurity/StandIn' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'Whisker';            Tiers = @({ Install-FromSourceDotNet -Name 'Whisker' -Repo 'eladshamir/Whisker' -DestRoot $script:SharpToolsRoot }) }
-        # C# tools reclassified out of the general/untagged batch below
         @{ Name = 'DotNetToJScript';    Tiers = @({ Install-FromSourceDotNet -Name 'DotNetToJScript' -Repo 'tyranid/DotNetToJScript' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'ForgeCert';          Tiers = @({ Install-FromSourceDotNet -Name 'ForgeCert' -Repo 'GhostPack/ForgeCert' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'GadgetToJScript';    Tiers = @({ Install-FromSourceDotNet -Name 'GadgetToJScript' -Repo 'med0x2e/GadgetToJScript' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'Group3r';            Tiers = @({ Install-FromSourceDotNet -Name 'Group3r' -Repo 'Group3r/Group3r' -DestRoot $script:SharpToolsRoot }) }
-        # Moderate confidence these two are C#, not just PowerShell - worth a
-        # quick check after cloning if the build step skips.
-        # KeeThief ships 3 unrelated .sln files (vendored KeePass source, a native
-        # DecryptionShellcode project) alongside the real one - pin the path explicitly so a
-        # recursive *.sln search doesn't grab the wrong one.
         @{ Name = 'KeeThief';           Tiers = @({ Install-FromSourceDotNet -Name 'KeeThief' -Repo 'GhostPack/KeeThief' -DestRoot $script:SharpToolsRoot -SlnPath 'KeeTheft\KeeTheft.sln' }) }
         @{ Name = 'LdapSignCheck';      Tiers = @({ Install-FromSourceDotNet -Name 'LdapSignCheck' -Repo 'cube0x0/LdapSignCheck' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'KrbRelayUp';         Tiers = @({ Install-FromSourceDotNet -Name 'KrbRelayUp' -Repo 'Dec0ne/KrbRelayUp' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'SauronEye';          Tiers = @({ Install-FromSourceDotNet -Name 'SauronEye' -Repo 'vivami/SauronEye' -DestRoot $script:SharpToolsRoot }) }
-        @{ Name = 'SpoolSample';        Tiers = @({ Install-FromSourceDotNet -Name 'SpoolSample' -Repo 'leechristensen/SpoolSample' -DestRoot $script:SharpToolsRoot }) }
+        # The repo's .sln (MS-RPRN.sln) also includes an unrelated native C++ RPC sample
+        # project (MS-RPRN.vcxproj) that needs the Desktop C++ workload we don't install -
+        # target the C# project directly instead. It only builds as x64, not AnyCPU.
+        @{ Name = 'SpoolSample';        Tiers = @({ Install-FromSourceDotNet -Name 'SpoolSample' -Repo 'leechristensen/SpoolSample' -DestRoot $script:SharpToolsRoot -SlnPath 'SpoolSample\SpoolSample.csproj' -Platform 'x64' }) }
         @{ Name = 'ThreatCheck';        Tiers = @({ Install-FromSourceDotNet -Name 'ThreatCheck' -Repo 'rasta-mouse/ThreatCheck' -DestRoot $script:SharpToolsRoot }) }
 
         # --- [Cloud]-tagged tools -> C:\Tools\Cloud ---
@@ -1370,6 +1674,14 @@ function Get-PackageTable {
         @{ Name = 'GenericPotato';  Tiers = @({ Install-GitCloneOnly -Name 'GenericPotato' -Repo 'micahvandeusen/GenericPotato' -DestRoot $script:PotatoRoot }) }
         @{ Name = 'GodPotato';      Tiers = @({ Install-GitCloneOnly -Name 'GodPotato' -Repo 'BeichenDream/GodPotato' -DestRoot $script:PotatoRoot }) }
 
+        # --- Nim modules -> C:\Tools\nimmods ---
+        @{ Name = 'nim-rev-shell';  Tiers = @({ Install-GitCloneOnly -Name 'nim-rev-shell' -Repo 'Sn1r/Nim-Reverse-Shell' -DestRoot $script:NimModsRoot }) }
+        @{ Name = 'offensivenim';   Tiers = @({ Install-GitCloneOnly -Name 'offensivenim' -Repo 'byt3bl33d3r/OffensiveNim' -DestRoot $script:NimModsRoot }) }
+        @{ Name = 'nimcrypt2';      Tiers = @({ Install-GitCloneOnly -Name 'nimcrypt2' -Repo 'icyguider/Nimcrypt2' -DestRoot $script:NimModsRoot }) }
+        @{ Name = 'nim-registry';   Tiers = @({ Install-GitCloneOnly -Name 'nim-registry' -Repo 'miere43/nim-registry' -DestRoot $script:NimModsRoot }) }
+        @{ Name = 'nimbus';         Tiers = @({ Install-GitCloneOnly -Name 'nimbus' -Repo 'D3Ext/Nimbus' -DestRoot $script:NimModsRoot }) }
+        @{ Name = 'partyloader';    Tiers = @({ Install-GitCloneOnly -Name 'partyloader' -Repo 'itaymigdal/PartyLoader' -DestRoot $script:NimModsRoot }) }
+
         # --- Untagged repos from verify-packages.md -> default C:\Tools\src ---
         @{ Name = 'AdaptixC2';                Tiers = @({ Install-GitCloneOnly -Name 'AdaptixC2' -Repo 'Adaptix-Framework/AdaptixC2' }) }
         @{ Name = 'BadAssMacros';             Tiers = @({ Install-GitCloneOnly -Name 'BadAssMacros' -Repo 'Inf0secRabbit/BadAssMacros' }) }
@@ -1378,19 +1690,16 @@ function Get-PackageTable {
         @{ Name = 'CS-Loader';                Tiers = @({ Install-GitCloneOnly -Name 'CS-Loader' -Repo 'Gality369/CS-Loader' }) }
         @{ Name = 'Dumpert';                  Tiers = @({ Install-GitCloneOnly -Name 'Dumpert' -Repo 'outflanknl/Dumpert' }) }
         @{ Name = 'EvilClippy';               Tiers = @({ Install-GitCloneOnly -Name 'EvilClippy' -Repo 'outflanknl/EvilClippy' }) }
-        @{ Name = 'Freeze';                   Tiers = @({ Install-FromSourceGo -Name 'Freeze' -Repo 'Tylous/Freeze' }) }
+        @{ Name = 'Freeze';                   Tiers = @({ Install-FromSourceRust -Name 'Freeze' -Repo 'Tylous/Freeze' -Target 'x86_64-pc-windows-gnu' }) }
         @{ Name = 'Get-LAPSPasswords';        Tiers = @({ Install-GitCloneOnly -Name 'Get-LAPSPasswords' -Repo 'kfosaaen/Get-LAPSPasswords' }) }
-        @{ Name = 'go-cookie-monster';        Tiers = @({ Install-FromSourceGo -Name 'go-cookie-monster' -Repo 'c2biz/go-cookie-monster' }) }
-        @{ Name = 'GoBuster';                 Tiers = @({ Install-FromSourceGo -Name 'GoBuster' -Repo 'OJ/gobuster' }) }
-        @{ Name = 'GoWitness';                Tiers = @({ Install-FromSourceGo -Name 'GoWitness' -Repo 'sensepost/gowitness' }) }
+        @{ Name = 'go-cookie-monster';        Tiers = @({ Install-FromSourceGo -Name 'go-cookie-monster' -Repo 'c2biz/go-cookie-monster' -Env @{ CGO_ENABLED = '1'; GOARCH = 'amd64'; GOOS = 'windows' } }) }
+        @{ Name = 'GoBuster';                 Tiers = @({ Install-GoInstall -Name 'GoBuster' -Package 'github.com/OJ/gobuster/v3@latest' }) }
+        @{ Name = 'GoWitness';                Tiers = @({ Install-GoInstall -Name 'GoWitness' -Package 'github.com/sensepost/gowitness@latest' }) }
         @{ Name = 'IIS-Raid';                 Tiers = @({ Install-GitCloneOnly -Name 'IIS-Raid' -Repo '0x09AL/IIS-Raid' }) }
-        @{ Name = 'injectAmsiBypass';         Tiers = @({ Install-GitCloneOnly -Name 'injectAmsiBypass' -Repo 'boku7/injectAmsiBypass' }) }
-        @{ Name = 'injectEtwBypass';          Tiers = @({ Install-GitCloneOnly -Name 'injectEtwBypass' -Repo 'boku7/injectEtwBypass' }) }
         @{ Name = 'Invoke-DOSfuscation';      Tiers = @({ Install-GitCloneOnly -Name 'Invoke-DOSfuscation' -Repo 'danielbohannon/Invoke-DOSfuscation' }) }
         @{ Name = 'Invoke-Obfuscation';       Tiers = @({ Install-GitCloneOnly -Name 'Invoke-Obfuscation' -Repo 'danielbohannon/Invoke-Obfuscation' }) }
-        @{ Name = 'Kerbeus-BOF';              Tiers = @({ Install-GitCloneOnly -Name 'Kerbeus-BOF' -Repo 'RalfHacker/Kerbeus-BOF' }) }
-        @{ Name = 'Kerbrute';                 Tiers = @({ Install-FromSourceGo -Name 'Kerbrute' -Repo 'ropnop/kerbrute' }) }
-        @{ Name = 'LDAPNomNom';               Tiers = @({ Install-FromSourceGo -Name 'LDAPNomNom' -Repo 'lkarlslund/ldapnomnom' }) }
+        @{ Name = 'Kerbrute';                 Tiers = @({ Install-GoInstall -Name 'Kerbrute' -Package 'github.com/ropnop/kerbrute@latest' }) }
+        @{ Name = 'LDAPNomNom';               Tiers = @({ Install-GoInstall -Name 'LDAPNomNom' -Package 'github.com/lkarlslund/ldapnomnom@latest' }) }
         @{ Name = 'MailSniper';               Tiers = @({ Install-GitCloneOnly -Name 'MailSniper' -Repo 'dafthack/MailSniper' }) }
         @{ Name = 'MFASweep';                 Tiers = @({ Install-GitCloneOnly -Name 'MFASweep' -Repo 'dafthack/MFASweep' }) }
         @{ Name = 'PetitPotam';               Tiers = @({ Install-GitCloneOnly -Name 'PetitPotam' -Repo 'topotam/PetitPotam' }) }
@@ -1398,12 +1707,11 @@ function Get-PackageTable {
         @{ Name = 'PowerMad';                 Tiers = @({ Install-GitCloneOnly -Name 'PowerMad' -Repo 'Kevin-Robertson/Powermad' }) }
         @{ Name = 'PowerUpSQL';               Tiers = @({ Install-GitCloneOnly -Name 'PowerUpSQL' -Repo 'NetSPI/PowerUpSQL' }) }
         @{ Name = 'PSPKIAudit';               Tiers = @({ Install-GitCloneOnly -Name 'PSPKIAudit' -Repo 'GhostPack/PSPKIAudit' }) }
-        @{ Name = 'RustHound-CE';             Tiers = @({ Install-FromSourceRust -Name 'RustHound-CE' -Repo 'g0h4n/RustHound-CE' }) }
-        @{ Name = 'rustyneedle';              Tiers = @({ Install-FromSourceRust -Name 'rustyneedle' -Repo 'mttaggart/rustyneedle' }) }
-        @{ Name = 'ServiceMove-BOF';          Tiers = @({ Install-GitCloneOnly -Name 'ServiceMove-BOF' -Repo 'netero1010/ServiceMove-BOF' }) }
+        @{ Name = 'RustHound-CE';             Tiers = @({ Install-FromSourceRust -Name 'RustHound-CE' -Repo 'g0h4n/RustHound-CE' -Target 'x86_64-pc-windows-gnu' }) }
+        @{ Name = 'rustyneedle';              Tiers = @({ Install-FromSourceRust -Name 'rustyneedle' -Repo 'mttaggart/rustyneedle' -Target 'x86_64-pc-windows-gnu' }) }
         @{ Name = 'Stracciatella';            Tiers = @({ Install-GitCloneOnly -Name 'Stracciatella' -Repo 'mgeeky/Stracciatella' }) }
         @{ Name = 'StreamDivert';             Tiers = @({ Install-GitCloneOnly -Name 'StreamDivert' -Repo 'jellever/StreamDivert' }) }
-        @{ Name = 'SuperMega';                Tiers = @({ Install-GitCloneOnly -Name 'SuperMega' -Repo 'dobin/SuperMega' }) }
+        @{ Name = 'SuperMega';                Tiers = @({ Install-GitCloneOnly -Name 'SuperMega' -Repo 'dobin/SuperMega' -PipRequirements }) }
         @{ Name = 'upx';                      Tiers = @({ Install-GitCloneOnly -Name 'upx' -Repo 'upx/upx' }) }
     )
 }
@@ -1426,24 +1734,24 @@ function Show-Summary {
 
 function Initialize-Environment {
     $script:ToolsRoot      = 'C:\Tools'
+    $script:PayloadRoot    = 'C:\Payloads'
     $script:BinRoot        = Join-Path $script:ToolsRoot 'bin'
     $script:DlRoot         = Join-Path $script:ToolsRoot 'downloads'
     $script:BofRoot        = Join-Path $script:ToolsRoot 'BOF'
     $script:SharpToolsRoot = Join-Path $script:ToolsRoot 'SharpTools'
     $script:CloudRoot      = Join-Path $script:ToolsRoot 'Cloud'
     $script:PotatoRoot     = Join-Path $script:ToolsRoot 'PotatoFarm'
+    $script:NimModsRoot    = Join-Path $script:ToolsRoot 'nimmods'
     $script:LogRoot        = Join-Path $script:ToolsRoot 'logs'
     $script:TranscriptFile = Join-Path $script:LogRoot 'RedWindows-transcript.log'
     $script:ResultsCsv     = Join-Path $script:LogRoot 'RedWindows-results.csv'
     $script:Results        = New-Object System.Collections.Generic.List[object]
     $script:CurrentStage   = 0
 
-    # Generic clone/build targets (Install-GitCloneOnly/Install-FromSourceDotNet
-    # without an explicit -DestRoot) land directly in $script:ToolsRoot - no
-    # separate "src" subfolder.
+
     $allDirs = @(
-        $script:ToolsRoot, $script:BinRoot, $script:DlRoot, $script:LogRoot,
-        $script:BofRoot, $script:SharpToolsRoot, $script:CloudRoot, $script:PotatoRoot
+        $script:ToolsRoot, $script:PayloadRoot, $script:BinRoot, $script:DlRoot, $script:LogRoot,
+        $script:BofRoot, $script:SharpToolsRoot, $script:CloudRoot, $script:PotatoRoot, $script:NimModsRoot
     )
     foreach ($dir in $allDirs) {
         if (!(Test-Path $dir)) {
@@ -1451,9 +1759,6 @@ function Initialize-Environment {
         }
     }
 
-    # Started here (before Write-Status is first called for this run) so the transcript
-    # captures everything - it's -Append'd across the reboots between stages, so this ends up
-    # one continuous log of the whole 3-stage run rather than 3 separate fragments.
     try {
         Start-Transcript -Path $script:TranscriptFile -Append -ErrorAction Stop | Out-Null
     } catch {
@@ -1480,8 +1785,8 @@ function Invoke-Stage1 {
     Set-HighPerformancePowerPlan
     New-RangeAdminUser
 
-    # Installed last - its own PATH alias needs a fresh session, which is
-    # exactly what the restart below provides.
+    Install-WindowsUpdates
+
     Install-Winget
 
     Complete-Stage -NextStage 2
@@ -1489,43 +1794,49 @@ function Invoke-Stage1 {
 
 function Invoke-Stage2 {
     $script:CurrentStage = 2
-    Write-Status "`n=== Stage 2: install Git ===" 'Magenta'
+    Write-Status "`n=== Stage 2: install Git, Rust, ChooseNim ===" 'Magenta'
+
+    Disable-WindowsDefender
 
     # Git also needs a fresh session for its PATH entry to resolve, so it
     # gets its own stage rather than running inside Install-AllPackages.
-    Install-WingetPackage 'Git' 'Git.Git' | Out-Null
-
+    Install-WingetPackage 'Git'       'Git.Git'
+    Install-WingetPackage 'Rust'      'Rustlang.Rustup'
+    Install-WingetPackage 'ChooseNim' 'NimLang.ChooseNim'
+    Install-WingetPackage 'Python 3.13' 'Python.Python.3.13'
+    Add-PythonFirewallRule
     Complete-Stage -NextStage 3
 }
 
 function Invoke-Stage3 {
     $script:CurrentStage = 3
-    Write-Status "`n=== Stage 3: core dev environment (Python, Go, Rust, MSYS2, Nim, VS2022) ===" 'Magenta'
+    Write-Status "`n=== Stage 3: core dev environment (Nim, Python, Go, .NET SDK, VS2022) ===" 'Magenta'
 
-    # Same entries also exist in Get-PackageTable (Stage 4) - each of those functions already
-    # detects "already installed/built" and returns early, so running them here first (and
-    # again later) is harmless, exactly like Git's duplication between Stage 2 and the table.
-    Install-WingetPackage 'Python 3.13' 'Python.Python.3.13' | Out-Null
-    Install-WingetPackage 'Go' 'GoLang.Go' | Out-Null
-
-    # VS2022's C++ workload/Windows SDK go in before Rust so rustup-init finds an existing
-    # MSVC toolchain instead of warning "installing msvc toolchain without its prerequisites".
-    if (Install-WingetPackage 'Visual Studio 2022 Community' 'Microsoft.VisualStudio.2022.Community') {
-        Install-VS2022Components
-        Enable-NetFx35Feature
-    }
-
-    Install-Rust | Out-Null
-    Install-Msys2 | Out-Null
-    Install-MsysToolchain | Out-Null
-    Install-NimFromSource | Out-Null
+    Disable-WindowsDefender
+    Install-ChooseNim
+    Install-WingetPackage 'Go' 'GoLang.Go'
+    Install-WingetPackage '.NET SDK' 'Microsoft.DotNet.SDK.8'
+    Install-WingetPackage 'NuGet' 'Microsoft.NuGet'
+    Install-WingetPackage 'Visual Studio 2022 Community' 'Microsoft.VisualStudio.2022.Community'
+    Install-Pipx
 
     Complete-Stage -NextStage 4
 }
 
 function Invoke-Stage4 {
     $script:CurrentStage = 4
-    Write-Status "`n=== Stage 4: remaining packages ===" 'Magenta'
+    Write-Status "`n=== Stage 4: VS2022 components, MSYS2, Nim packages, remaining packages ===" 'Magenta'
+
+    Disable-WindowsDefender
+
+    # Runs here rather than in Stage 3 - VS2022 needs the fresh session that Complete-Stage's
+    # restart provides before its component installer/ServiceHub will start cleanly.
+    Install-VS2022Components
+    Enable-NetFx35Feature
+
+    Install-Msys2
+    Install-MsysToolchain
+    Install-NimPackages
 
     Install-AllPackages
     Unregister-ContinuationTask
@@ -1552,7 +1863,7 @@ function Install-AllPackages {
 
         if (-not $done) {
             Write-Status "[x] [$name] all install tiers failed - skipping" 'Red'
-            Record-Result -Name $name -Status Skipped -Detail 'no tier succeeded'
+            Record-Result -Name $name -Status Skipped -Detail 'Failed'
         }
     }
 }
