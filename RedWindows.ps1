@@ -452,6 +452,23 @@ function Set-AutoLogin {
     }
 }
 
+function Disable-AutoLogin {
+    Write-Status "[-] [Auto-login] disabling for attacker user" 'Cyan'
+    try {
+        $winlogonPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
+        Set-ItemProperty -Path $winlogonPath -Name AutoAdminLogon -Value '0' -ErrorAction Stop
+        # Autologon64.exe stashes the plaintext password here - clear it now that
+        # auto-login is no longer needed, rather than leaving it on disk indefinitely.
+        Remove-ItemProperty -Path $winlogonPath -Name DefaultPassword -ErrorAction SilentlyContinue
+
+        Write-Status "[+] [Auto-login] disabled" 'Green'
+        Add-Result -Name 'Auto-login' -Status Installed -Detail 'disabled'
+    } catch {
+        Write-Status "[!] [Auto-login] disable failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Auto-login' -Status Skipped -Detail $_.Exception.Message
+    }
+}
+
 function Install-Winget {
     Write-Status "[-] [winget] checking for existing installation" 'Cyan'
 
@@ -549,6 +566,17 @@ function Unregister-ContinuationTask {
     } catch {
         Write-Status "[!] [Continuation task] cleanup failed: $($_.Exception.Message)" 'Yellow'
     }
+}
+
+function Complete-Installation {
+    Unregister-ContinuationTask
+    Disable-AutoLogin
+    Remove-LocalSupportUser
+    Show-Summary
+    Start-Sleep -Seconds 300
+    Write-Status "`n=== Stage complete - restarting to continue as stage $NextStage ===" 'Magenta'
+    Start-Sleep -Seconds 30
+    Restart-Computer -Force
 }
 
 function Complete-Stage {
@@ -2155,7 +2183,10 @@ function Install-Jdk17 {
 
 function Install-FirefoxExtensions {
     param(
-        [string[]]$Slugs = @('darkreader', 'foxyproxy-standard', 'wappalyzer', 'cookie-editor')
+        [string[]]$Slugs = @(
+            'darkreader', 'foxyproxy-standard', 'wappalyzer', 'cookie-editor',
+            'user-agent-string-switcher', 'multi-account-containers', 'retire-js', 'shodan-addon'
+        )
     )
 
     $firefoxExe = Get-ChildItem -Path "$env:ProgramFiles\Mozilla Firefox", "${env:ProgramFiles(x86)}\Mozilla Firefox" `
@@ -2198,11 +2229,147 @@ function Install-FirefoxExtensions {
     if (-not (Test-Path $distDir)) { New-Item -ItemType Directory -Path $distDir -Force | Out-Null }
 
     $policy = @{ policies = @{ ExtensionSettings = $extensionSettings } }
-    ($policy | ConvertTo-Json -Depth 10) | Set-Content -Path (Join-Path $distDir 'policies.json') -Encoding UTF8
+    $policyJson = $policy | ConvertTo-Json -Depth 10
+    # Set-Content -Encoding UTF8 writes a BOM on Windows PowerShell 5.1 - Firefox's JSON
+    # parser silently rejects a BOM-prefixed policies.json (the whole file fails to parse,
+    # not just the unrecognized bytes), so write it out without one explicitly.
+    [System.IO.File]::WriteAllText((Join-Path $distDir 'policies.json'), $policyJson, (New-Object System.Text.UTF8Encoding($false)))
 
     Write-Status "[+] [Firefox Extensions] policies.json written for $($extensionSettings.Count) extension(s) - installs on next Firefox launch" 'Green'
     Add-Result -Name 'Firefox Extensions' -Status Installed -Detail "policies.json:$($Slugs -join ',')"
     return $true
+}
+
+function Install-ChromeExtensions {
+    param(
+        # Chrome Web Store extension IDs - verified directly against each listing's
+        # publisher/user count before adding (ModHeader was deliberately left out: its
+        # popular listing was pulled by Google/Microsoft in July 2026 after researchers
+        # found it exfiltrating browsing history, and every replacement listing since
+        # is unverified).
+        [string[]]$ExtensionIds = @(
+            'eimadpbcbfnmbkopoojfekhnkhdbieeh', # Dark Reader
+            'gcknhkkoolaabfmlnjonogaaifnjlfnp', # FoxyProxy
+            'gppongmhjkpfnbhagpmjfkannfbllamg', # Wappalyzer
+            'ookdjilphngeeeghgngjabigmpepanpl', # Cookie Editor
+            'bhchdcejhohfmigjafbampogmaanbfkg', # User-Agent Switcher and Manager
+            'ciilcijdmepbaiocfaacfcmcnkdhjnag', # Retire.js
+            'jjalcfnidlmpjhdfepjhjbhnhkbgleap'  # Shodan
+        )
+    )
+
+    Write-Status "[-] [Chrome Extensions] configuring ExtensionInstallForcelist policy" 'Cyan'
+    try {
+        $policyPath = 'HKLM:\SOFTWARE\Policies\Google\Chrome\ExtensionInstallForcelist'
+        if (-not (Test-Path $policyPath)) {
+            New-Item -Path $policyPath -Force | Out-Null
+        }
+
+        $i = 1
+        foreach ($id in $ExtensionIds) {
+            Set-ItemProperty -Path $policyPath -Name "$i" -Value "$id;https://clients2.google.com/service/update2/crx"
+            $i++
+        }
+
+        Write-Status "[+] [Chrome Extensions] $($ExtensionIds.Count) extension(s) set to force-install - installs on next Chrome launch" 'Green'
+        Add-Result -Name 'Chrome Extensions' -Status Installed -Detail "ExtensionInstallForcelist:$($ExtensionIds -join ',')"
+        return $true
+    } catch {
+        Write-Status "[!] [Chrome Extensions] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Chrome Extensions' -Status Skipped -Detail $_.Exception.Message
+        return $false
+    }
+}
+
+function Install-VulnConfig {
+    $scriptUrl = 'https://raw.githubusercontent.com/orthrus1775/Windows-PrivEsc-Setup/master/vuln-config.ps1'
+    $destFile  = Join-Path $script:DlRoot 'vuln-config.ps1'
+
+    Write-Status "[-] [VulnConfig] downloading vuln-config.ps1" 'Cyan'
+    try {
+        Invoke-WebRequest -Uri $scriptUrl -OutFile $destFile -UseBasicParsing
+    } catch {
+        Write-Status "[!] [VulnConfig] download failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'VulnConfig' -Status Skipped -Detail $_.Exception.Message
+        return $false
+    }
+
+    # Runs as its own process rather than dot-sourced - the script defines its own helper
+    # functions (Test-IsAdministrator, Set-WorkingDirectories, etc.) and unconditionally
+    # self-executes Invoke-WinVulnsSetup at the bottom, so isolating it in a child process
+    # avoids colliding with RedWindows' own function/variable names in this session.
+    Write-Status "[-] [VulnConfig] running vuln-config.ps1 (creates the 'LocalSupport' admin account + intentionally vulnerable services/tasks/registry)" 'Cyan'
+    powershell.exe -ExecutionPolicy Bypass -NoProfile -File $destFile
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "[!] [VulnConfig] vuln-config.ps1 exited with code $LASTEXITCODE" 'Yellow'
+        Add-Result -Name 'VulnConfig' -Status Skipped -Detail "exit $LASTEXITCODE"
+        return $false
+    }
+
+    Write-Status "[+] [VulnConfig] applied" 'Green'
+    Add-Result -Name 'VulnConfig' -Status Installed -Detail 'Windows-PrivEsc-Setup/vuln-config.ps1'
+    return $true
+}
+
+function Remove-LocalSupportUser {
+    # vuln-config.ps1 (Install-VulnConfig, Stage 3) creates this account as one of its
+    # intentional privesc vectors - it's only needed for the vulnerable-config window
+    # between Stage 3 and Stage 4, not for the finished box.
+    Write-Status "[-] [LocalSupport user] removing (created by vuln-config.ps1)" 'Cyan'
+    try {
+        $existingUser = Get-LocalUser -Name 'LocalSupport' -ErrorAction SilentlyContinue
+        if (-not $existingUser) {
+            Write-Status "[+] [LocalSupport user] not present - skipping" 'DarkGray'
+            Add-Result -Name 'LocalSupport user' -Status Skipped -Detail 'not present'
+            return
+        }
+
+        if (Get-LocalGroupMember -Group 'Administrators' -Member 'LocalSupport' -ErrorAction SilentlyContinue) {
+            Remove-LocalGroupMember -Group 'Administrators' -Member 'LocalSupport'
+        }
+        Remove-LocalUser -Name 'LocalSupport'
+
+        Write-Status "[+] [LocalSupport user] removed from Administrators and deleted" 'Green'
+        Add-Result -Name 'LocalSupport user' -Status Installed -Detail 'removed from Administrators + deleted'
+    } catch {
+        Write-Status "[!] [LocalSupport user] removal failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'LocalSupport user' -Status Skipped -Detail $_.Exception.Message
+    }
+}
+
+function Install-Client {
+    $batPath = 'C:\Tools\AdaptixC2\AdaptixClient\build.bat'
+
+    Write-Status "[-] [Client] running $batPath" 'Cyan'
+    try {
+        if (-not (Test-Path $batPath)) {
+            Write-Status "[!] [Client] $batPath not found - skipping" 'Yellow'
+            Add-Result -Name 'Client' -Status Skipped -Detail "$batPath not found"
+            return $false
+        }
+
+        $content = Get-Content -Path $batPath -Raw
+
+        $content = $content -replace '%%PATH%%', '%PATH%'
+
+        $content = $content -replace '(?im)^\s*pause\s*$', '%WINDIR%\System32\timeout.exe /T 30 /NOBREAK'
+        Set-Content -Path $batPath -Value $content -NoNewline
+
+        cmd.exe /c "`"$batPath`""
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [Client] $batPath exited with code $LASTEXITCODE" 'Yellow'
+            Add-Result -Name 'Client' -Status Skipped -Detail "exit $LASTEXITCODE"
+            return $false
+        }
+
+        Write-Status "[+] [Client] $batPath completed" 'Green'
+        Add-Result -Name 'Client' -Status Installed -Detail $batPath
+        return $true
+    } catch {
+        Write-Status "[!] [Client] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Client' -Status Skipped -Detail $_.Exception.Message
+        return $false
+    }
 }
 
 # =============================================================================
@@ -2238,6 +2405,7 @@ function Get-PackageTable {
         @{ Name = 'Firefox';            Tiers = @({ Install-WingetPackage 'Firefox' 'Mozilla.Firefox.ESR' }) }
         @{ Name = 'Firefox Extensions'; Tiers = @({ Install-FirefoxExtensions }) }
         @{ Name = 'Google Chrome';      Tiers = @({ Install-WingetPackage 'Google Chrome' 'Google.Chrome' }) }
+        @{ Name = 'Chrome Extensions';  Tiers = @({ Install-ChromeExtensions }) }
 
         # --- Web proxy / testing ---
         @{ Name = 'Burp Suite Community'; Tiers = @({ Install-WingetPackage 'Burp Suite Community' 'PortSwigger.BurpSuite.Community' }) }
@@ -2518,6 +2686,7 @@ function Invoke-Stage3 {
     Write-Status "`n=== Stage 3: core dev environment (Nim, Python, Go, .NET SDK, VS2022) ===" 'Magenta'
 
     Disable-WindowsDefender
+    Install-VulnConfig
     Install-ChooseNim
     Install-WingetPackage 'Go' 'GoLang.Go'
     Install-WingetPackage '.NET SDK' 'Microsoft.DotNet.SDK.8'
@@ -2544,10 +2713,11 @@ function Invoke-Stage4 {
     Install-NimPackages
 
     Install-AllPackages
+    Install-Client
     Set-QuickAccess
+    Set-QuickAccess -Path $script:PayloadRoot
     Set-Background
-    Unregister-ContinuationTask
-    Show-Summary
+    Complete-Installation
     try { Stop-Transcript | Out-Null } catch {}
 }
 
