@@ -32,7 +32,30 @@ function Write-Status {
     Write-Host "[$(Get-Date -Format 'HH:mm:ss')] $Message" -ForegroundColor $Color
 }
 
-function Record-Result {
+function Invoke-NativeQuiet {
+    param(
+        [Parameter(Mandatory)]
+        [scriptblock]$Command
+    )
+
+    # With $ErrorActionPreference = 'Stop' set globally, redirecting a native command's
+    # stderr - via 2>&1, 2>$null, OR *>$null, contrary to the belief baked into some of
+    # the call sites below that *>$null is safe - wraps each stderr line into a
+    # terminating NativeCommandError. Chatty-but-successful tools (pipx's "creating
+    # virtual environment...", go's "go: downloading ...", rustup's "info: downloading
+    # component ...") then abort the calling function before it ever reaches its own
+    # $LASTEXITCODE check. Relax the preference only for the duration of the call so
+    # $LASTEXITCODE still reflects the real outcome afterward.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $Command
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+}
+
+function Add-Result {
     param(
         [string]$Name,
         [ValidateSet('Installed', 'Skipped', 'Failed')]
@@ -104,9 +127,21 @@ function Disable-WindowsDefender {
     } catch {
         Write-Status "[!] Add-MpPreference exclusion failed: $($_.Exception.Message)" 'Yellow'
     }
-        try {
+    try {
         Add-MpPreference -ExclusionPath $script:PayloadRoot -ErrorAction Stop
         Write-Status "[+] Exclusion added for $script:PayloadRoot" 'Green'
+    } catch {
+        Write-Status "[!] Add-MpPreference exclusion failed: $($_.Exception.Message)" 'Yellow'
+    }
+    try {
+        Add-MpPreference -ExclusionPath $script:AppDataLocal -ErrorAction Stop
+        Write-Status "[+] Exclusion added for $script:AppDataLocal" 'Green'
+    } catch {
+        Write-Status "[!] Add-MpPreference exclusion failed: $($_.Exception.Message)" 'Yellow'
+    }
+    try {
+        Add-MpPreference -ExclusionPath $script:GoUserRoot -ErrorAction Stop
+        Write-Status "[+] Exclusion added for $script:GoUserRoot" 'Green'
     } catch {
         Write-Status "[!] Add-MpPreference exclusion failed: $($_.Exception.Message)" 'Yellow'
     }
@@ -119,10 +154,78 @@ function Disable-ScreenSaver {
         powercfg -x -monitor-timeout-ac 0
         powercfg -x -monitor-timeout-dc 0
         Write-Status "[+] [Screensaver] disabled" 'Green'
-        Record-Result -Name 'Screensaver' -Status Installed -Detail 'disabled'
+        Add-Result -Name 'Screensaver' -Status Installed -Detail 'disabled'
     } catch {
         Write-Status "[!] [Screensaver] failed: $($_.Exception.Message)" 'Yellow'
-        Record-Result -Name 'Screensaver' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name 'Screensaver' -Status Skipped -Detail $_.Exception.Message
+    }
+}
+
+function Set-QuickAccess {
+    param(
+        [string]$Path = $script:ToolsRoot
+    )
+
+    Write-Status "[-] [Quick Access] pinning $Path" 'Cyan'
+    try {
+        if (-not (Test-Path $Path)) {
+            Write-Status "[!] [Quick Access] $Path does not exist - skipping" 'Yellow'
+            Add-Result -Name 'Quick Access' -Status Skipped -Detail "$Path not found"
+            return
+        }
+
+        $shell = New-Object -ComObject Shell.Application
+        $shell.Namespace($Path).Self.InvokeVerb('pintohome')
+
+        Write-Status "[+] [Quick Access] pinned $Path" 'Green'
+        Add-Result -Name 'Quick Access' -Status Installed -Detail $Path
+    } catch {
+        Write-Status "[!] [Quick Access] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Quick Access' -Status Skipped -Detail $_.Exception.Message
+    }
+}
+
+function Set-Background {
+    # Pulled from the repo rather than shipped alongside the script - matches this
+    # script's standalone/no-local-dependency design (Save-SelfCopy only persists
+    # RedWindows.ps1 itself across stage reboots, not other repo files).
+    $imageUrl  = 'https://raw.githubusercontent.com/orthrus1775/RedWindows/main/Background.png'
+    $imageDir  = Join-Path $env:USERPROFILE 'Documents'
+    $imagePath = Join-Path $imageDir 'Background.png'
+
+    Write-Status "[-] [Background] downloading $imageUrl" 'Cyan'
+    try {
+        if (-not (Test-Path $imageDir)) {
+            New-Item -ItemType Directory -Path $imageDir -Force | Out-Null
+        }
+        Invoke-WebRequest -Uri $imageUrl -OutFile $imagePath -UseBasicParsing
+    } catch {
+        Write-Status "[!] [Background] download failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Background' -Status Skipped -Detail $_.Exception.Message
+        return
+    }
+
+    try {
+        Add-Type -Namespace RedWindows -Name Wallpaper -MemberDefinition @'
+[DllImport("user32.dll", CharSet = CharSet.Auto)]
+public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
+'@ -ErrorAction SilentlyContinue
+
+        # WallpaperStyle 10 = Fill - avoids a stretched/tiled look regardless of the image's
+        # native resolution vs. the target's display resolution.
+        Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name WallpaperStyle -Value '10'
+        Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name TileWallpaper -Value '0'
+
+        $SPI_SETDESKWALLPAPER = 0x0014
+        $SPIF_UPDATEINIFILE   = 0x01
+        $SPIF_SENDCHANGE      = 0x02
+        [RedWindows.Wallpaper]::SystemParametersInfo($SPI_SETDESKWALLPAPER, 0, $imagePath, $SPIF_UPDATEINIFILE -bor $SPIF_SENDCHANGE) | Out-Null
+
+        Write-Status "[+] [Background] wallpaper set to $imagePath" 'Green'
+        Add-Result -Name 'Background' -Status Installed -Detail $imagePath
+    } catch {
+        Write-Status "[!] [Background] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Background' -Status Skipped -Detail $_.Exception.Message
     }
 }
 
@@ -132,7 +235,7 @@ function Disable-WindowsUpdates {
         $updates = (New-Object -ComObject 'Microsoft.Update.AutoUpdate').Settings
         if ($updates.ReadOnly) {
             Write-Status "[!] [Windows Update] settings are read-only (GPO-restricted) - skipping" 'Yellow'
-            Record-Result -Name 'Windows Update' -Status Skipped -Detail 'read-only (GPO restricted)'
+            Add-Result -Name 'Windows Update' -Status Skipped -Detail 'read-only (GPO restricted)'
             return
         }
 
@@ -140,10 +243,10 @@ function Disable-WindowsUpdates {
         $updates.Save()
         $updates.Refresh()
         Write-Status "[+] [Windows Update] automatic updates disabled" 'Green'
-        Record-Result -Name 'Windows Update' -Status Installed -Detail 'disabled'
+        Add-Result -Name 'Windows Update' -Status Installed -Detail 'disabled'
     } catch {
         Write-Status "[!] [Windows Update] failed: $($_.Exception.Message)" 'Yellow'
-        Record-Result -Name 'Windows Update' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name 'Windows Update' -Status Skipped -Detail $_.Exception.Message
     }
 }
 
@@ -163,10 +266,10 @@ function Install-SshServer {
         }
 
         Write-Status "[+] [OpenSSH Server] installed and running" 'Green'
-        Record-Result -Name 'OpenSSH Server' -Status Installed -Detail 'capability + sshd + firewall rule'
+        Add-Result -Name 'OpenSSH Server' -Status Installed -Detail 'capability + sshd + firewall rule'
     } catch {
         Write-Status "[!] [OpenSSH Server] failed: $($_.Exception.Message)" 'Yellow'
-        Record-Result -Name 'OpenSSH Server' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name 'OpenSSH Server' -Status Skipped -Detail $_.Exception.Message
     }
 }
 
@@ -179,7 +282,7 @@ function Add-PythonFirewallRule {
         $python = Get-Command python -ErrorAction SilentlyContinue
         if (-not $python) {
             Write-Status "[!] [Python firewall] python is not on PATH - skipping" 'Yellow'
-            Record-Result -Name 'Python firewall' -Status Skipped -Detail 'python not on PATH'
+            Add-Result -Name 'Python firewall' -Status Skipped -Detail 'python not on PATH'
             return
         }
 
@@ -191,10 +294,10 @@ function Add-PythonFirewallRule {
         }
 
         Write-Status "[+] [Python firewall] rules added" 'Green'
-        Record-Result -Name 'Python firewall' -Status Installed -Detail "allow $($python.Source) (Private,Public)"
+        Add-Result -Name 'Python firewall' -Status Installed -Detail "allow $($python.Source) (Private,Public)"
     } catch {
         Write-Status "[!] [Python firewall] failed: $($_.Exception.Message)" 'Yellow'
-        Record-Result -Name 'Python firewall' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name 'Python firewall' -Status Skipped -Detail $_.Exception.Message
     }
 }
 
@@ -214,10 +317,10 @@ function Install-WindowsUpdates {
         Install-WindowsUpdate -AcceptAll -IgnoreReboot -Confirm:$false | Out-Null
 
         Write-Status "[+] [Windows Update] updates installed" 'Green'
-        Record-Result -Name 'Windows Update' -Status Installed -Detail 'PSWindowsUpdate: Install-WindowsUpdate -AcceptAll'
+        Add-Result -Name 'Windows Update' -Status Installed -Detail 'PSWindowsUpdate: Install-WindowsUpdate -AcceptAll'
     } catch {
         Write-Status "[!] [Windows Update] failed: $($_.Exception.Message)" 'Yellow'
-        Record-Result -Name 'Windows Update' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name 'Windows Update' -Status Skipped -Detail $_.Exception.Message
     }
 }
 
@@ -242,10 +345,10 @@ function Set-HighPerformancePowerPlan {
         powercfg -change hibernate-timeout-dc 0
 
         Write-Status "[+] [Power plan] set to high performance" 'Green'
-        Record-Result -Name 'Power plan' -Status Installed -Detail 'high performance'
+        Add-Result -Name 'Power plan' -Status Installed -Detail 'high performance'
     } catch {
         Write-Status "[!] [Power plan] failed: $($_.Exception.Message)" 'Yellow'
-        Record-Result -Name 'Power plan' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name 'Power plan' -Status Skipped -Detail $_.Exception.Message
     }
 }
 
@@ -286,7 +389,7 @@ function New-AttackerUser {
         $existingUser = Get-LocalUser -Name $username -ErrorAction SilentlyContinue
         if ($existingUser) {
             Write-Status "[+] [attacker user] already exists, skipping creation" 'DarkGray'
-            Record-Result -Name 'attacker user' -Status Installed -Detail 'already present'
+            Add-Result -Name 'attacker user' -Status Installed -Detail 'already present'
             return
         }
 
@@ -296,10 +399,10 @@ function New-AttackerUser {
         Add-LocalGroupMember -Group 'Administrators' -Member $username
         Write-Status "[+] [attacker user] added to Administrators group" 'Green'
 
-        Record-Result -Name 'attacker user' -Status Installed -Detail 'local user + Administrators'
+        Add-Result -Name 'attacker user' -Status Installed -Detail 'local user + Administrators'
     } catch {
         Write-Status "[!] [attacker user] failed: $($_.Exception.Message)" 'Yellow'
-        Record-Result -Name 'attacker user' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name 'attacker user' -Status Skipped -Detail $_.Exception.Message
     }
 }
 
@@ -335,17 +438,17 @@ function Set-AutoLogin {
     $autologonExe = Install-Autologon
     if (-not $autologonExe -or -not (Test-Path $autologonExe)) {
         Write-Status "[!] [Auto-login] Autologon64.exe unavailable - skipping" 'Yellow'
-        Record-Result -Name 'Auto-login' -Status Skipped -Detail 'Autologon64.exe unavailable'
+        Add-Result -Name 'Auto-login' -Status Skipped -Detail 'Autologon64.exe unavailable'
         return
     }
 
     try {
         & $autologonExe attacker . 'GoCyber2026!!' /accepteula | Out-Null
         Write-Status "[+] [Auto-login] configured for 'attacker'" 'Green'
-        Record-Result -Name 'Auto-login' -Status Installed -Detail 'attacker'
+        Add-Result -Name 'Auto-login' -Status Installed -Detail 'attacker'
     } catch {
         Write-Status "[!] [Auto-login] failed: $($_.Exception.Message)" 'Yellow'
-        Record-Result -Name 'Auto-login' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name 'Auto-login' -Status Skipped -Detail $_.Exception.Message
     }
 }
 
@@ -356,7 +459,7 @@ function Install-Winget {
         $existing = winget --version 2>$null
         if ($existing) {
             Write-Status "[+] [winget] already installed ($existing)" 'DarkGray'
-            Record-Result -Name 'winget' -Status Installed -Detail 'already present'
+            Add-Result -Name 'winget' -Status Installed -Detail 'already present'
             return
         }
     }
@@ -375,14 +478,14 @@ function Install-Winget {
         $verify = winget --version 2>$null
         if ($verify) {
             Write-Status "[+] [winget] installed ($verify)" 'Green'
-            Record-Result -Name 'winget' -Status Installed -Detail $verify
+            Add-Result -Name 'winget' -Status Installed -Detail $verify
         } else {
             Write-Status "[!] [winget] installed but not yet resolvable in this session - expected, resolves after restart" 'Yellow'
-            Record-Result -Name 'winget' -Status Installed -Detail 'installed, pending restart'
+            Add-Result -Name 'winget' -Status Installed -Detail 'installed, pending restart'
         }
     } catch {
         Write-Status "[!] [winget] install failed: $($_.Exception.Message)" 'Yellow'
-        Record-Result -Name 'winget' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name 'winget' -Status Skipped -Detail $_.Exception.Message
     }
 }
 
@@ -485,7 +588,7 @@ function Install-WingetPackage {
     $existing = winget list --id $Id --accept-source-agreements 2>$null
     if ($LASTEXITCODE -eq 0 -and $existing -match [regex]::Escape($Id)) {
         Write-Status "[+] [$Name] already installed" 'DarkGray'
-        Record-Result -Name $Name -Status Installed -Detail 'already present'
+        Add-Result -Name $Name -Status Installed -Detail 'already present'
         return $true
     }
 
@@ -493,7 +596,7 @@ function Install-WingetPackage {
     winget install --id $Id -e --accept-source-agreements --accept-package-agreements
     if ($LASTEXITCODE -eq 0) {
         Write-Status "[+] [$Name] installed via winget" 'Green'
-        Record-Result -Name $Name -Status Installed -Detail "winget:$Id"
+        Add-Result -Name $Name -Status Installed -Detail "winget:$Id"
         return $true
     }
 
@@ -567,7 +670,7 @@ function Install-GitHubReleaseAsset {
         return $false
     }
 
-    $destDir = Join-Path $script:BinRoot $Name
+    $destDir = Join-Path $script:ToolsRoot $Name
     if ($Extract7z) {
         $sevenZip = Get-7ZipPath
         if (-not $sevenZip) {
@@ -593,7 +696,7 @@ function Install-GitHubReleaseAsset {
     }
 
     Write-Status "[+] [$Name] downloaded $($asset.name) -> $destDir" 'Green'
-    Record-Result -Name $Name -Status Installed -Detail "github-release:$Repo/$($asset.name)"
+    Add-Result -Name $Name -Status Installed -Detail "github-release:$Repo/$($asset.name)"
     return $true
 }
 
@@ -614,6 +717,47 @@ function Find-MSBuildExe {
     $fallback = 'C:\Program Files\Microsoft Visual Studio\2022\Community\MSBuild\Current\bin\MSBuild.exe'
     if (Test-Path $fallback) { return $fallback }
     return $null
+}
+
+function Find-VsDevCmd {
+    # cl.exe/link.exe are never on PATH by default - they only resolve once VsDevCmd.bat has
+    # run and populated INCLUDE/LIB/PATH for the MSVC toolchain. Locate it the same way as
+    # Find-MSBuildExe, but require the actual C++ workload (a VS install can have MSBuild
+    # without the VC.Tools component, e.g. a .NET-only install).
+    $vswhere = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
+    if (Test-Path $vswhere) {
+        $installPath = & $vswhere -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null | Select-Object -First 1
+        if ($installPath) {
+            $vsDevCmd = Join-Path $installPath 'Common7\Tools\VsDevCmd.bat'
+            if (Test-Path $vsDevCmd) { return $vsDevCmd }
+        }
+    }
+    $fallback = 'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat'
+    if (Test-Path $fallback) { return $fallback }
+    return $null
+}
+
+function Invoke-InVsDevShell {
+    param(
+        [Parameter(Mandatory)]
+        [string]$WorkingDirectory,
+        [Parameter(Mandatory)]
+        [string]$Command,
+        [string]$Arch = 'x64'
+    )
+
+    $vsDevCmd = Find-VsDevCmd
+    if (-not $vsDevCmd) {
+        Write-Status "[!] VsDevCmd.bat not found - install the 'Desktop development with C++' VS workload" 'Yellow'
+        return $false
+    }
+
+    # PowerShell can't source a .bat's environment changes directly - chain the cd, the
+    # VsDevCmd.bat call, and the actual build command into one cmd.exe invocation so the
+    # build command inherits the INCLUDE/LIB/PATH that VsDevCmd.bat sets up.
+    $cmdLine = "cd /d `"$WorkingDirectory`" && call `"$vsDevCmd`" -arch=$Arch -no_logo && $Command"
+    cmd.exe /c $cmdLine
+    return ($LASTEXITCODE -eq 0)
 }
 
 function Register-NuGetOrgSource {
@@ -855,6 +999,46 @@ function Restore-LegacyHintPathPackages {
     }
 }
 
+function Restore-PackagesConfigFolders {
+    param(
+        [string]$CloneDir
+    )
+
+    # Modern nuget.exe (7.x) runs `nuget restore` through the MSBuild-based restore
+    # engine, which for these old non-SDK projects writes obj\project.assets.json /
+    # .nuget.g.props|targets but silently never populates the classic
+    # <ProjectDir>\packages\<Id>.<Version>\ folder that packages.config-era .csproj
+    # files hardcode into <Reference HintPath>, <Import Project>, and
+    # EnsureNuGetPackageBuildImports <Error Condition="!Exists(...)"> checks (seen on
+    # SharpSCCM: every packages.config entry, not just build-tool-only ones like
+    # ILMerge/dnMerge, was missing from packages\ despite "nuget restore" reporting
+    # success). `nuget install <packages.config>` uses the classic restore path and
+    # reliably extracts every listed package next to its packages.config.
+    Get-ChildItem -Path $CloneDir -Filter 'packages.config' -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
+        $packagesDir = Join-Path $_.DirectoryName 'packages'
+        Write-Status "[-] [$($_.Directory.BaseName)] nuget install $($_.Name) -> $packagesDir" 'Cyan'
+        nuget install $_.FullName -OutputDirectory $packagesDir -NonInteractive *>$null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [$($_.Directory.BaseName)] nuget install packages.config failed (exit $LASTEXITCODE)" 'Yellow'
+        }
+    }
+}
+
+function Update-GitSubmodules {
+    param(
+        [string]$Name,
+        [string]$CloneDir
+    )
+
+    Write-Status "[-] [$Name] git submodule update --init --recursive" 'Cyan'
+    git -C $CloneDir submodule update --init --recursive
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "[!] [$Name] git submodule update failed (exit $LASTEXITCODE)" 'Yellow'
+        return $false
+    }
+    return $true
+}
+
 function Install-FromSourceDotNet {
     param(
         [string]$Name,
@@ -862,7 +1046,8 @@ function Install-FromSourceDotNet {
         [string]$DestRoot = $script:ToolsRoot,
         [string]$SlnPath,
         [string]$Platform,
-        [string]$Ref
+        [string]$Ref,
+        [switch]$SubModule
     )
 
     $cloneDir = Join-Path $DestRoot $Name
@@ -895,6 +1080,9 @@ function Install-FromSourceDotNet {
             Write-Status "[!] [$Name] failed to checkout pinned ref '$Ref' (exit $LASTEXITCODE)" 'Yellow'
             return $false
         }
+    }
+    if ($SubModule -and -not (Update-GitSubmodules -Name $Name -CloneDir $cloneDir)) {
+        return $false
     }
     $headSha = (git -C $cloneDir rev-parse --short HEAD 2>$null)
     Write-Status "[-] [$Name] at commit $headSha" 'Cyan'
@@ -953,6 +1141,8 @@ function Install-FromSourceDotNet {
                 Write-Status "[!] [$Name] nuget restore failed (exit $LASTEXITCODE)" 'Yellow'
                 return $false
             }
+
+            if ($packagesConfig) { Restore-PackagesConfigFolders -CloneDir $cloneDir }
         } else {
             Write-Status "[!] [$Name] legacy project but nuget is not on PATH - build will likely fail" 'Yellow'
         }
@@ -984,7 +1174,7 @@ function Install-FromSourceDotNet {
     }
 
     Write-Status "[+] [$Name] built from source at $cloneDir" 'Green'
-    Record-Result -Name $Name -Status Installed -Detail "source-build:$Repo"
+    Add-Result -Name $Name -Status Installed -Detail "source-build:$Repo"
     return $true
 }
 
@@ -995,7 +1185,8 @@ function Install-GitCloneOnly {
         [string]$DestRoot = $script:ToolsRoot,
         # Installs the repo's requirements.txt via pip after cloning - needed for script
         # tools (e.g. SuperMega) that ship Python dependencies alongside the source.
-        [switch]$PipRequirements
+        [switch]$PipRequirements,
+        [switch]$SubModule
     )
 
     $cloneDir = Join-Path $DestRoot $Name
@@ -1011,13 +1202,17 @@ function Install-GitCloneOnly {
         return $false
     }
 
+    if ($SubModule -and -not (Update-GitSubmodules -Name $Name -CloneDir $cloneDir)) {
+        return $false
+    }
+
     if ($PipRequirements) {
         $reqFile = Join-Path $cloneDir 'requirements.txt'
         if (Test-Path $reqFile) {
             Update-SessionPath
             if (Get-Command python -ErrorAction SilentlyContinue) {
                 Write-Status "[-] [$Name] pip install -r requirements.txt" 'Cyan'
-                python -m pip install --quiet --upgrade -r $reqFile *>$null
+                Invoke-NativeQuiet { python -m pip install --quiet --upgrade -r $reqFile *>$null }
                 if ($LASTEXITCODE -ne 0) {
                     Write-Status "[!] [$Name] pip install -r requirements.txt failed (exit $LASTEXITCODE)" 'Yellow'
                 }
@@ -1028,7 +1223,7 @@ function Install-GitCloneOnly {
     }
 
     Write-Status "[+] [$Name] cloned to $cloneDir" 'Green'
-    Record-Result -Name $Name -Status Installed -Detail "git-clone:$Repo"
+    Add-Result -Name $Name -Status Installed -Detail "git-clone:$Repo"
     return $true
 }
 
@@ -1045,7 +1240,8 @@ function Install-FromSourceGo {
         [string]$DestRoot = $script:ToolsRoot,
         # Build-time env vars - needed for repos that require cross-compile settings
         # (e.g. go-cookie-monster needs CGO_ENABLED/GOARCH/GOOS set explicitly).
-        [hashtable]$Env
+        [hashtable]$Env,
+        [switch]$SubModule
     )
 
     $cloneDir = Join-Path $DestRoot $Name
@@ -1058,6 +1254,10 @@ function Install-FromSourceGo {
         }
     } catch {
         Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+        return $false
+    }
+
+    if ($SubModule -and -not (Update-GitSubmodules -Name $Name -CloneDir $cloneDir)) {
         return $false
     }
 
@@ -1077,9 +1277,11 @@ function Install-FromSourceGo {
             Set-Item -Path "Env:$key" -Value $Env[$key]
         }
 
-        # *>$null, not 2>&1 - see the comment in Install-WingetPackage. go build routinely
-        # writes non-fatal notices (module downloads, deprecation warnings) to stderr.
-        go build -o $outExe . *>$null
+        # go build routinely writes non-fatal notices (module downloads, deprecation
+        # warnings) to stderr - see the Invoke-NativeQuiet comment for why *>$null alone
+        # isn't enough to keep those from aborting the script under $ErrorActionPreference
+        # = 'Stop'.
+        Invoke-NativeQuiet { go build -o $outExe . *>$null }
         if ($LASTEXITCODE -ne 0) {
             Write-Status "[!] [$Name] go build failed (exit $LASTEXITCODE)" 'Yellow'
             return $false
@@ -1096,7 +1298,7 @@ function Install-FromSourceGo {
     }
 
     Write-Status "[+] [$Name] built from source at $outExe" 'Green'
-    Record-Result -Name $Name -Status Installed -Detail "source-build-go:$Repo"
+    Add-Result -Name $Name -Status Installed -Detail "source-build-go:$Repo"
     return $true
 }
 
@@ -1113,14 +1315,14 @@ function Install-GoInstall {
     }
 
     Write-Status "[-] [$Name] go install $Package" 'Cyan'
-    go install $Package *>$null
+    Invoke-NativeQuiet { go install $Package *>$null }
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [$Name] go install failed (exit $LASTEXITCODE)" 'Yellow'
         return $false
     }
 
     Write-Status "[+] [$Name] installed via go install" 'Green'
-    Record-Result -Name $Name -Status Installed -Detail "go-install:$Package"
+    Add-Result -Name $Name -Status Installed -Detail "go-install:$Package"
     return $true
 }
 
@@ -1129,7 +1331,8 @@ function Install-FromSourceRust {
         [string]$Name,
         [string]$Repo,
         [string]$DestRoot = $script:ToolsRoot,
-        [string]$Target
+        [string]$Target,
+        [switch]$SubModule
     )
 
     $cloneDir = Join-Path $DestRoot $Name
@@ -1142,6 +1345,10 @@ function Install-FromSourceRust {
         }
     } catch {
         Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+        return $false
+    }
+
+    if ($SubModule -and -not (Update-GitSubmodules -Name $Name -CloneDir $cloneDir)) {
         return $false
     }
 
@@ -1160,7 +1367,7 @@ function Install-FromSourceRust {
             Write-Status "[!] [$Name] cloned but rustup is not on PATH - install Rust first" 'Yellow'
             return $false
         }
-        & $rustup.Source target add $Target *>$null
+        Invoke-NativeQuiet { & $rustup.Source target add $Target *>$null }
         if ($LASTEXITCODE -ne 0) {
             Write-Status "[!] [$Name] rustup target add $Target failed (exit $LASTEXITCODE)" 'Yellow'
             return $false
@@ -1183,7 +1390,415 @@ function Install-FromSourceRust {
     }
 
     Write-Status "[+] [$Name] built from source at $outDir" 'Green'
-    Record-Result -Name $Name -Status Installed -Detail "source-build-rust:$Repo"
+    Add-Result -Name $Name -Status Installed -Detail "source-build-rust:$Repo"
+    return $true
+}
+
+function Install-FromSourceCMake {
+    param(
+        [string]$Name,
+        [string]$Repo,
+        [string]$DestRoot = $script:ToolsRoot,
+        [string]$Configuration = 'Release',
+        [string]$Ref,
+        [switch]$SubModule,
+
+        # CMake generator (e.g. 'Ninja', 'Visual Studio 17 2022') - left unset to use
+        # whatever cmake picks as the default for the environment.
+        [string]$Generator,
+        # Generator platform/arch for multi-arch generators, e.g. -A x64 with the VS generators.
+        [string]$Architecture,
+        # Extra -D defines to pass through to the configure step, e.g. @('-DUPX_CONSOLE=ON').
+        [string[]]$CMakeArgs,
+        # Specific target to build instead of the generator's default ("all"/"ALL_BUILD").
+        [string]$Target,
+        [switch]$Clean
+    )
+
+    $cloneDir = Join-Path $DestRoot $Name
+    Write-Status "[-] [$Name] git clone $Repo -> $cloneDir" 'Cyan'
+    try {
+        if (Test-Path $cloneDir) {
+            if ($Ref) {
+                Write-Status "[-] [$Name] git fetch" 'Cyan'
+                git -C $cloneDir fetch
+            } else {
+                Write-Status "[-] [$Name] git pull" 'Cyan'
+                git -C $cloneDir pull
+            }
+        } else {
+            git clone "https://github.com/$Repo.git" $cloneDir
+        }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
+            return $false
+        }
+    } catch {
+        Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+        return $false
+    }
+
+    if ($Ref) {
+        Write-Status "[-] [$Name] checking out pinned ref $Ref" 'Cyan'
+        git -C $cloneDir checkout $Ref
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [$Name] failed to checkout pinned ref '$Ref' (exit $LASTEXITCODE)" 'Yellow'
+            return $false
+        }
+    }
+    if ($SubModule -and -not (Update-GitSubmodules -Name $Name -CloneDir $cloneDir)) {
+        return $false
+    }
+
+    Update-SessionPath
+    if (-not (Get-Command cmake -ErrorAction SilentlyContinue)) {
+        Write-Status "[!] [$Name] cloned but cmake is not on PATH - install CMake first" 'Yellow'
+        return $false
+    }
+
+    $buildDir = Join-Path $cloneDir "build\$($Configuration.ToLower())"
+    if ($Clean -and (Test-Path $buildDir)) {
+        Write-Status "[-] [$Name] cleaning previous build dir $buildDir" 'Yellow'
+        Remove-Item -Recurse -Force $buildDir
+    }
+    if (-not (Test-Path $buildDir)) {
+        New-Item -ItemType Directory -Path $buildDir | Out-Null
+    }
+
+    $configureArgs = @('-S', $cloneDir, '-B', $buildDir, "-DCMAKE_BUILD_TYPE=$Configuration")
+    if ($Generator) { $configureArgs += @('-G', $Generator) }
+    if ($Architecture) { $configureArgs += @('-A', $Architecture) }
+    if ($CMakeArgs) { $configureArgs += $CMakeArgs }
+
+    Write-Status "[-] [$Name] cmake $($configureArgs -join ' ')" 'Cyan'
+    cmake @configureArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "[!] [$Name] cmake configure failed (exit $LASTEXITCODE)" 'Yellow'
+        return $false
+    }
+
+    $buildArgs = @('--build', $buildDir, '--config', $Configuration, '--parallel')
+    if ($Target) { $buildArgs += @('--target', $Target) }
+
+    Write-Status "[-] [$Name] cmake $($buildArgs -join ' ')" 'Cyan'
+    cmake @buildArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "[!] [$Name] cmake build failed (exit $LASTEXITCODE)" 'Yellow'
+        return $false
+    }
+
+    Write-Status "[+] [$Name] built from source at $buildDir" 'Green'
+    Add-Result -Name $Name -Status Installed -Detail "source-build-cmake:$Repo"
+    return $true
+}
+
+function Install-FromSourceBof {
+    param(
+        [string]$Name,
+        [string]$Repo,
+        [string]$DestRoot = $script:ToolsRoot,
+        [string]$Ref,
+        [switch]$SubModule,
+        # Relative path (from the clone root) to the build script - BOFs invoke cl.exe/link.exe
+        # directly rather than going through a .sln, so there's no MSBuild project to target.
+        [string]$BuildScript = 'make.bat',
+        [string]$Arch = 'x64'
+    )
+
+    $cloneDir = Join-Path $DestRoot $Name
+    Write-Status "[-] [$Name] git clone $Repo -> $cloneDir" 'Cyan'
+    try {
+        if (Test-Path $cloneDir) {
+            if ($Ref) {
+                Write-Status "[-] [$Name] git fetch" 'Cyan'
+                git -C $cloneDir fetch
+            } else {
+                Write-Status "[-] [$Name] git pull" 'Cyan'
+                git -C $cloneDir pull
+            }
+        } else {
+            git clone "https://github.com/$Repo.git" $cloneDir
+        }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
+            return $false
+        }
+    } catch {
+        Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+        return $false
+    }
+
+    if ($Ref) {
+        Write-Status "[-] [$Name] checking out pinned ref $Ref" 'Cyan'
+        git -C $cloneDir checkout $Ref
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [$Name] failed to checkout pinned ref '$Ref' (exit $LASTEXITCODE)" 'Yellow'
+            return $false
+        }
+    }
+    if ($SubModule -and -not (Update-GitSubmodules -Name $Name -CloneDir $cloneDir)) {
+        return $false
+    }
+
+    $buildScriptPath = Join-Path $cloneDir $BuildScript
+    if (-not (Test-Path $buildScriptPath)) {
+        Write-Status "[!] [$Name] build script '$BuildScript' not found under $cloneDir" 'Yellow'
+        return $false
+    }
+
+    # Run from the build script's own directory, not the clone root - these scripts
+    # (e.g. Unhook-BOF's make.bat) commonly reference source files by a path relative to
+    # themselves rather than %~dp0, so they only work when invoked from where they live.
+    $buildScriptDir  = Split-Path $buildScriptPath -Parent
+    $buildScriptLeaf = Split-Path $buildScriptPath -Leaf
+
+    Write-Status "[-] [$Name] running $BuildScript in a VS Developer shell ($Arch)" 'Cyan'
+    if (-not (Invoke-InVsDevShell -WorkingDirectory $buildScriptDir -Command "`"$buildScriptLeaf`"" -Arch $Arch)) {
+        Write-Status "[!] [$Name] $BuildScript failed (exit $LASTEXITCODE)" 'Yellow'
+        return $false
+    }
+
+    Write-Status "[+] [$Name] built from source at $cloneDir" 'Green'
+    Add-Result -Name $Name -Status Installed -Detail "source-build-bof:$Repo"
+    return $true
+}
+
+function Install-FromSourceBofMake {
+    param(
+        [string]$Name,
+        [string]$Repo,
+        [string]$DestRoot = $script:ToolsRoot,
+        [string]$Ref,
+        [switch]$SubModule,
+        # Relative path (from the clone root) to the directory containing the Makefile -
+        # several BOF repos nest it (e.g. 'src').
+        [string]$MakeDir = '',
+        [string]$MakeTarget,
+
+        # x86_64-w64-mingw32-gcc/strip are what mingw-w64-x86_64-toolchain actually installs
+        # under C:\msys64\mingw64\bin - most BOF Makefiles reference these exact names for
+        # their x64 compiler variable, but only ship the unprefixed 'strip.exe', not
+        # 'x86_64-w64-mingw32-strip'. Passed as blanket make command-line overrides below;
+        # make silently ignores overrides for variables a given Makefile never references,
+        # so this is safe across repos with different variable-naming conventions
+        # (CC vs CC_x64, STRIP vs STRIP_x64).
+        [string]$Cc64 = 'x86_64-w64-mingw32-gcc',
+        [string]$Strip64 = 'strip',
+
+        # Older BOF source routinely trips checks GCC 14+ promotes from warning to hard
+        # error by default in C mode (e.g. passing a SIZE_T* where beacon.h declares int*) -
+        # demote those back to warnings so pre-GCC14-era repos still build.
+        [string[]]$ExtraCFlags = @(
+            '-Wno-error=incompatible-pointer-types',
+            '-Wno-error=implicit-function-declaration',
+            '-Wno-error=int-conversion'
+        ),
+
+        # Some repos bundle many independent BOFs, one per subfolder, rather than a single
+        # buildable tool (e.g. CS-Situational-Awareness-BOF has ~70 under src\SA). Build
+        # every Makefile found under -MakeDir instead of just one, tracking each subfolder
+        # as its own result so a handful of failures don't obscure everything else that
+        # built fine.
+        [switch]$Recursive
+    )
+
+    $cloneDir = Join-Path $DestRoot $Name
+    Write-Status "[-] [$Name] git clone $Repo -> $cloneDir" 'Cyan'
+    try {
+        if (Test-Path $cloneDir) {
+            if ($Ref) {
+                Write-Status "[-] [$Name] git fetch" 'Cyan'
+                git -C $cloneDir fetch
+            } else {
+                Write-Status "[-] [$Name] git pull" 'Cyan'
+                git -C $cloneDir pull
+            }
+        } else {
+            git clone "https://github.com/$Repo.git" $cloneDir
+        }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
+            return $false
+        }
+    } catch {
+        Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+        return $false
+    }
+
+    if ($Ref) {
+        Write-Status "[-] [$Name] checking out pinned ref $Ref" 'Cyan'
+        git -C $cloneDir checkout $Ref
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [$Name] failed to checkout pinned ref '$Ref' (exit $LASTEXITCODE)" 'Yellow'
+            return $false
+        }
+    }
+    if ($SubModule -and -not (Update-GitSubmodules -Name $Name -CloneDir $cloneDir)) {
+        return $false
+    }
+
+    $searchRoot = if ($MakeDir) { Join-Path $cloneDir $MakeDir } else { $cloneDir }
+    if (-not (Test-Path $searchRoot)) {
+        Write-Status "[!] [$Name] MakeDir '$MakeDir' not found under $cloneDir" 'Yellow'
+        return $false
+    }
+
+    Update-SessionPath
+    if (-not (Get-Command mingw32-make -ErrorAction SilentlyContinue)) {
+        Write-Status "[!] [$Name] mingw32-make not on PATH - install the MSYS2 toolchain first" 'Yellow'
+        return $false
+    }
+
+    $ccOverride = "$Cc64 $($ExtraCFlags -join ' ')"
+    $makeArgs = @()
+    if ($MakeTarget) { $makeArgs += $MakeTarget }
+    $makeArgs += "CC=$ccOverride", "CC_x64=$ccOverride", "STRIP=$Strip64", "STRIP_x64=$Strip64"
+
+    if ($Recursive) {
+        $makefiles = Get-ChildItem -Path $searchRoot -Recurse -Include 'Makefile', 'makefile', 'GNUmakefile' -File -ErrorAction SilentlyContinue
+        if (-not $makefiles) {
+            Write-Status "[!] [$Name] no Makefiles found under $searchRoot" 'Yellow'
+            return $false
+        }
+
+        $succeeded = 0
+        foreach ($mf in $makefiles) {
+            $relDir = $mf.DirectoryName.Substring($searchRoot.Length).Trim('\') -replace '\\', '/'
+            $subName = if ($relDir) { "$Name/$relDir" } else { $Name }
+
+            Write-Status "[-] [$subName] mingw32-make $($makeArgs -join ' ')" 'Cyan'
+            Push-Location $mf.DirectoryName
+            try {
+                mingw32-make @makeArgs
+            } finally {
+                Pop-Location
+            }
+
+            if ($LASTEXITCODE -eq 0) {
+                Write-Status "[+] [$subName] built" 'Green'
+                Add-Result -Name $subName -Status Installed -Detail "source-build-bof-make:$Repo"
+                $succeeded++
+            } else {
+                Write-Status "[!] [$subName] failed (exit $LASTEXITCODE)" 'Yellow'
+                Add-Result -Name $subName -Status Skipped -Detail "source-build-bof-make:$Repo (exit $LASTEXITCODE)"
+            }
+        }
+
+        Write-Status "[+] [$Name] built $succeeded/$($makefiles.Count) under $searchRoot" 'Green'
+        return ($succeeded -gt 0)
+    }
+
+    if (-not (Test-Path (Join-Path $searchRoot 'Makefile'))) {
+        Write-Status "[!] [$Name] no Makefile found at $searchRoot" 'Yellow'
+        return $false
+    }
+
+    Write-Status "[-] [$Name] mingw32-make $($makeArgs -join ' ') (in $searchRoot)" 'Cyan'
+    Push-Location $searchRoot
+    try {
+        mingw32-make @makeArgs
+    } finally {
+        Pop-Location
+    }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "[!] [$Name] mingw32-make failed (exit $LASTEXITCODE)" 'Yellow'
+        return $false
+    }
+
+    Write-Status "[+] [$Name] built from source at $searchRoot" 'Green'
+    Add-Result -Name $Name -Status Installed -Detail "source-build-bof-make:$Repo"
+    return $true
+}
+
+function Install-FromSourceNative {
+    param(
+        [string]$Name,
+        [string]$Repo,
+        [string]$DestRoot = $script:ToolsRoot,
+        # Relative path (from the clone root) to the .sln/.slnx/.vcxproj to build. Required -
+        # unlike Install-FromSourceDotNet, native repos routinely ship several solutions
+        # (bundled dependency libraries, alternate variants) and there's no safe way to
+        # guess which one is "the" project to build.
+        [Parameter(Mandatory)]
+        [string]$SlnPath,
+        [string]$Platform,
+        [string]$Configuration = 'Release',
+        [string]$Ref,
+
+        # Overrides for old repos pinned to a Windows SDK / toolset that's no longer the
+        # VS default - left unset (i.e. not passed to MSBuild) unless the caller needs them.
+        [string]$WindowsSdkVersion,
+        [string]$PlatformToolset,
+
+        [string]$MsBuildPath,
+        [switch]$SubModule
+    )
+
+    $cloneDir = Join-Path $DestRoot $Name
+    Write-Status "[-] [$Name] git clone $Repo -> $cloneDir" 'Cyan'
+    try {
+        if (Test-Path $cloneDir) {
+            if ($Ref) {
+                Write-Status "[-] [$Name] git fetch" 'Cyan'
+                git -C $cloneDir fetch
+            } else {
+                Write-Status "[-] [$Name] git pull" 'Cyan'
+                git -C $cloneDir pull
+            }
+        } else {
+            git clone "https://github.com/$Repo.git" $cloneDir
+        }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
+            return $false
+        }
+    } catch {
+        Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+        return $false
+    }
+
+    if ($Ref) {
+        Write-Status "[-] [$Name] checking out pinned ref $Ref" 'Cyan'
+        git -C $cloneDir checkout $Ref
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [$Name] failed to checkout pinned ref '$Ref' (exit $LASTEXITCODE)" 'Yellow'
+            return $false
+        }
+    }
+    if ($SubModule -and -not (Update-GitSubmodules -Name $Name -CloneDir $cloneDir)) {
+        return $false
+    }
+
+    $projectFile = Join-Path $cloneDir $SlnPath
+    if (-not (Test-Path $projectFile)) {
+        Write-Status "[!] [$Name] specified SlnPath '$SlnPath' not found under $cloneDir" 'Yellow'
+        return $false
+    }
+
+    $msbuildExe = $MsBuildPath
+    if (-not $msbuildExe) { $msbuildExe = Find-MSBuildExe }
+    if (-not $msbuildExe -or -not (Test-Path $msbuildExe)) {
+        Write-Status "[!] [$Name] MSBuild.exe not found (needs Visual Studio with the C++ Desktop workload)" 'Yellow'
+        return $false
+    }
+
+    # No NuGet restore step here - native C/C++ projects here don't use packages.config
+    # or PackageReference; dependencies are either vendored in-repo or resolved by the
+    # MSVC toolset/Windows SDK components installed alongside MSBuild.
+    $buildArgs = @($projectFile, "/p:Configuration=$Configuration", '/verbosity:minimal')
+    if ($Platform) { $buildArgs += "/p:Platform=$Platform" }
+    if ($WindowsSdkVersion) { $buildArgs += "/p:WindowsTargetPlatformVersion=$WindowsSdkVersion" }
+    if ($PlatformToolset) { $buildArgs += "/p:PlatformToolset=$PlatformToolset" }
+
+    Write-Status "[-] [$Name] building: $msbuildExe $($buildArgs -join ' ')" 'Cyan'
+    & $msbuildExe @buildArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "[!] [$Name] build failed (exit $LASTEXITCODE)" 'Yellow'
+        return $false
+    }
+
+    Write-Status "[+] [$Name] built from source at $cloneDir" 'Green'
+    Add-Result -Name $Name -Status Installed -Detail "source-build-native:$Repo"
     return $true
 }
 
@@ -1201,14 +1816,14 @@ function Install-PipPackage {
 
     Write-Status "[-] [$Name] pip install $PipName" 'Cyan'
 
-    python -m pip install --quiet --upgrade $PipName *>$null
+    Invoke-NativeQuiet { python -m pip install --quiet --upgrade $PipName *>$null }
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [$Name] pip install failed (exit $LASTEXITCODE)" 'Yellow'
         return $false
     }
 
     Write-Status "[+] [$Name] installed via pip" 'Green'
-    Record-Result -Name $Name -Status Installed -Detail "pip:$PipName"
+    Add-Result -Name $Name -Status Installed -Detail "pip:$PipName"
     return $true
 }
 
@@ -1228,10 +1843,10 @@ function Install-Pipx {
         return $false
     }
 
-    python -m pipx ensurepath *>$null
+    Invoke-NativeQuiet { python -m pipx ensurepath *>$null }
 
     Write-Status "[+] [pipx] installed via pip" 'Green'
-    Record-Result -Name 'pipx' -Status Installed -Detail 'pip:pipx'
+    Add-Result -Name 'pipx' -Status Installed -Detail 'pip:pipx'
     return $true
 }
 
@@ -1249,14 +1864,14 @@ function Install-PipxPackage {
 
     Write-Status "[-] [$Name] pipx install $PipxUrl" 'Cyan'
 
-    pipx install $PipxUrl *>$null
+    Invoke-NativeQuiet { pipx install $PipxUrl *>$null }
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [$Name] pipx install failed (exit $LASTEXITCODE)" 'Yellow'
         return $false
     }
 
     Write-Status "[+] [$Name] installed via pipx" 'Green'
-    Record-Result -Name $Name -Status Installed -Detail "pipx:$PipxUrl"
+    Add-Result -Name $Name -Status Installed -Detail "pipx:$PipxUrl"
     return $true
 }
 
@@ -1268,14 +1883,14 @@ function Install-ChooseNim {
     }
 
     Write-Status "[-] [ChooseNim] choosenim stable --firstInstall" 'Cyan'
-    choosenim stable --firstInstall 2>$null | Out-Null
+    Invoke-NativeQuiet { choosenim stable --firstInstall 2>$null | Out-Null }
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [ChooseNim] 'choosenim stable --firstInstall' failed (exit $LASTEXITCODE)" 'Yellow'
         return $false
     }
 
     Write-Status "[+] [ChooseNim] Nim installed, .nimble\bin added to PATH" 'Green'
-    Record-Result -Name 'ChooseNim' -Status Installed -Detail 'choosenim stable --firstInstall'
+    Add-Result -Name 'ChooseNim' -Status Installed -Detail 'choosenim stable --firstInstall'
     return $true
 }
 
@@ -1285,7 +1900,7 @@ function Install-Msys2 {
 
     if (Test-Path $msys2Dir) {
         Write-Status "[+] [MSYS2] already installed at $msys2Dir" 'DarkGray'
-        Record-Result -Name 'MSYS2' -Status Installed -Detail 'already present'
+        Add-Result -Name 'MSYS2' -Status Installed -Detail 'already present'
         return $true
     }
 
@@ -1308,7 +1923,7 @@ function Install-Msys2 {
     }
 
     Write-Status "[+] [MSYS2] extracted to $msys2Dir" 'Green'
-    Record-Result -Name 'MSYS2' -Status Installed -Detail "github-release:msys2/msys2-installer/$($asset.name)"
+    Add-Result -Name 'MSYS2' -Status Installed -Detail "github-release:msys2/msys2-installer/$($asset.name)"
     return $true
 }
 
@@ -1322,7 +1937,7 @@ function Install-MsysToolchain {
     $mingwGcc = 'C:\msys64\mingw64\bin\gcc.exe'
     if (Test-Path $mingwGcc) {
         Write-Status "[+] [MSYS2 toolchain] already installed" 'DarkGray'
-        Record-Result -Name 'MSYS2 toolchain' -Status Installed -Detail 'already present'
+        Add-Result -Name 'MSYS2 toolchain' -Status Installed -Detail 'already present'
         return $true
     }
 
@@ -1353,7 +1968,7 @@ function Install-MsysToolchain {
     }
 
     Write-Status "[+] [MSYS2 toolchain] installed, $mingwBin added to user PATH" 'Green'
-    Record-Result -Name 'MSYS2 toolchain' -Status Installed -Detail 'base-devel + mingw-w64-x86_64-toolchain/cmake/qt6'
+    Add-Result -Name 'MSYS2 toolchain' -Status Installed -Detail 'base-devel + mingw-w64-x86_64-toolchain/cmake/qt6'
     return $true
 }
 
@@ -1389,11 +2004,11 @@ function Install-NimPackages {
         nimble install -y $pkg 
         if ($LASTEXITCODE -ne 0) {
             Write-Status "[!] [Nim packages] $pkg failed (exit $LASTEXITCODE)" 'Yellow'
-            Record-Result -Name "Nim package: $pkg" -Status Skipped -Detail "nimble install failed (exit $LASTEXITCODE)"
+            Add-Result -Name "Nim package: $pkg" -Status Skipped -Detail "nimble install failed (exit $LASTEXITCODE)"
             continue
         }
         Write-Status "[+] [Nim packages] $pkg installed" 'Green'
-        Record-Result -Name "Nim package: $pkg" -Status Installed -Detail 'nimble'
+        Add-Result -Name "Nim package: $pkg" -Status Installed -Detail 'nimble'
     }
 }
 
@@ -1404,17 +2019,17 @@ function Enable-NetFx35Feature {
         $feature = Get-WindowsOptionalFeature -Online -FeatureName NetFx3
         if ($feature.State -eq 'Enabled') {
             Write-Status "[+] [.NET Framework 3.5] already enabled" 'DarkGray'
-            Record-Result -Name '.NET Framework 3.5' -Status Installed -Detail 'already enabled'
+            Add-Result -Name '.NET Framework 3.5' -Status Installed -Detail 'already enabled'
             return $true
         }
 
         Enable-WindowsOptionalFeature -Online -FeatureName NetFx3 -All -NoRestart | Out-Null
         Write-Status "[+] [.NET Framework 3.5] enabled" 'Green'
-        Record-Result -Name '.NET Framework 3.5' -Status Installed -Detail 'Windows feature enabled'
+        Add-Result -Name '.NET Framework 3.5' -Status Installed -Detail 'Windows feature enabled'
         return $true
     } catch {
         Write-Status "[!] [.NET Framework 3.5] failed: $($_.Exception.Message)" 'Yellow'
-        Record-Result -Name '.NET Framework 3.5' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name '.NET Framework 3.5' -Status Skipped -Detail $_.Exception.Message
         return $false
     }
 }
@@ -1476,7 +2091,7 @@ function Install-VS2022Components {
     }
 
     Write-Status "[+] [VS2022 components] added" 'Green'
-    Record-Result -Name 'VS2022 Components' -Status Installed -Detail "$($vsComponents.Count) components"
+    Add-Result -Name 'VS2022 Components' -Status Installed -Detail "$($vsComponents.Count) components"
     return $true
 }
 
@@ -1487,7 +2102,7 @@ function Install-Jdk17 {
 
     if (Test-Path (Join-Path $jdkBin 'javac.exe')) {
         Write-Status "[+] [JDK 17] already installed at $jdkHome" 'DarkGray'
-        Record-Result -Name 'JDK 17' -Status Installed -Detail 'already present'
+        Add-Result -Name 'JDK 17' -Status Installed -Detail 'already present'
         return $true
     }
 
@@ -1534,7 +2149,59 @@ function Install-Jdk17 {
     }
 
     Write-Status "[+] [JDK 17] installed at $jdkHome, added to user PATH" 'Green'
-    Record-Result -Name 'JDK 17' -Status Installed -Detail "manual-download:$jdkUrl"
+    Add-Result -Name 'JDK 17' -Status Installed -Detail "manual-download:$jdkUrl"
+    return $true
+}
+
+function Install-FirefoxExtensions {
+    param(
+        [string[]]$Slugs = @('darkreader', 'foxyproxy-standard', 'wappalyzer', 'cookie-editor')
+    )
+
+    $firefoxExe = Get-ChildItem -Path "$env:ProgramFiles\Mozilla Firefox", "${env:ProgramFiles(x86)}\Mozilla Firefox" `
+        -Filter 'firefox.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $firefoxExe) {
+        Write-Status "[!] [Firefox Extensions] firefox.exe not found - skipping" 'Yellow'
+        Add-Result -Name 'Firefox Extensions' -Status Skipped -Detail 'firefox.exe not found'
+        return $false
+    }
+
+    # policies.json force-installs by add-on guid, not by AMO slug, so each slug is
+    # resolved through the AMO API first. The guid is embedded in the signed xpi -
+    # a wrong/guessed guid here would just make Firefox silently reject the install.
+    $extensionSettings = [ordered]@{}
+    foreach ($slug in $Slugs) {
+        Write-Status "[-] [Firefox Extensions] resolving add-on id for $slug" 'Cyan'
+        try {
+            $meta = Invoke-RestMethod -Uri "https://addons.mozilla.org/api/v5/addons/addon/$slug/" -Headers @{ 'User-Agent' = 'RedWindows-installer' }
+        } catch {
+            Write-Status "[!] [Firefox Extensions] failed to resolve $slug : $($_.Exception.Message)" 'Yellow'
+            continue
+        }
+        if (-not $meta.guid) {
+            Write-Status "[!] [Firefox Extensions] no guid returned for $slug" 'Yellow'
+            continue
+        }
+        $extensionSettings[$meta.guid] = @{
+            installation_mode = 'force_installed'
+            install_url       = "https://addons.mozilla.org/firefox/downloads/latest/$slug/latest.xpi"
+        }
+    }
+
+    if ($extensionSettings.Count -eq 0) {
+        Write-Status "[!] [Firefox Extensions] none resolved - skipping" 'Yellow'
+        Add-Result -Name 'Firefox Extensions' -Status Skipped -Detail 'no extensions resolved'
+        return $false
+    }
+
+    $distDir = Join-Path $firefoxExe.DirectoryName 'distribution'
+    if (-not (Test-Path $distDir)) { New-Item -ItemType Directory -Path $distDir -Force | Out-Null }
+
+    $policy = @{ policies = @{ ExtensionSettings = $extensionSettings } }
+    ($policy | ConvertTo-Json -Depth 10) | Set-Content -Path (Join-Path $distDir 'policies.json') -Encoding UTF8
+
+    Write-Status "[+] [Firefox Extensions] policies.json written for $($extensionSettings.Count) extension(s) - installs on next Firefox launch" 'Green'
+    Add-Result -Name 'Firefox Extensions' -Status Installed -Detail "policies.json:$($Slugs -join ',')"
     return $true
 }
 
@@ -1567,6 +2234,11 @@ function Get-PackageTable {
         # @{ Name = 'pipx';               Tiers = @({ Install-Pipx }) }
         @{ Name = 'JDK 17.0.2';       Tiers = @({ Install-Jdk17 }) }
 
+        # --- Browsers ---
+        @{ Name = 'Firefox';            Tiers = @({ Install-WingetPackage 'Firefox' 'Mozilla.Firefox.ESR' }) }
+        @{ Name = 'Firefox Extensions'; Tiers = @({ Install-FirefoxExtensions }) }
+        @{ Name = 'Google Chrome';      Tiers = @({ Install-WingetPackage 'Google Chrome' 'Google.Chrome' }) }
+
         # --- Web proxy / testing ---
         @{ Name = 'Burp Suite Community'; Tiers = @({ Install-WingetPackage 'Burp Suite Community' 'PortSwigger.BurpSuite.Community' }) }
         @{ Name = 'Fiddler Classic';       Tiers = @({ Install-WingetPackage 'Fiddler Classic' 'Telerik.Fiddler.Classic' }) }
@@ -1589,35 +2261,37 @@ function Get-PackageTable {
 
         # --- DevTools (pinned releases, ported from lab-workstation.yml) ---
         @{ Name = 'FaceDancer';      Tiers = @({ Install-FromSourceRust -Name 'FaceDancer' -Repo 'Tylous/FaceDancer' -Target 'x86_64-pc-windows-gnu' }) }
-        @{ Name = 'RedTeamGrimoire'; Tiers = @({ Install-GitCloneOnly -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' }) }
+        
         @{ Name = 'swarmer';         Tiers = @({ Install-GitHubReleaseAsset -Name 'swarmer' -Repo 'praetorian-inc/swarmer' -AssetPattern 'swarmer.exe' -Tag 'v0.1.8' }) }
         @{ Name = 'HiveSwarming';    Tiers = @({ Install-GitHubReleaseAsset -Name 'HiveSwarming' -Repo 'stormshield/HiveSwarming' -AssetPattern 'HiveSwarming.exe' -Tag 'v1.6' }) }
 
         # --- [BOF]-tagged tools from verify-packages.md -> C:\Tools\BOF ---
-        @{ Name = 'bof-collection';                 Tiers = @({ Install-GitCloneOnly -Name 'bof-collection' -Repo 'rvrsh3ll/BOF_Collection' -DestRoot $script:BofRoot }) }
+        @{ Name = 'bof-collection';                 Tiers = @({ Install-FromSourceBofMake -Name 'bof-collection' -Repo 'rvrsh3ll/BOF_Collection' -DestRoot $script:BofRoot -Recursive }) }
         @{ Name = 'BOF-patchit';                     Tiers = @({ Install-GitCloneOnly -Name 'BOF-patchit' -Repo 'ScriptIdiot/BOF-patchit' -DestRoot $script:BofRoot }) }
-        @{ Name = 'BofRoast';                        Tiers = @({ Install-GitCloneOnly -Name 'BofRoast' -Repo 'cube0x0/BofRoast' -DestRoot $script:BofRoot }) }
-        @{ Name = 'C2-Tool-Collection';              Tiers = @({ Install-GitCloneOnly -Name 'C2-Tool-Collection' -Repo 'outflanknl/C2-Tool-Collection' -DestRoot $script:BofRoot }) }
+        @{ Name = 'BofRoast';                        Tiers = @({ Install-FromSourceBofMake -Name 'BofRoast' -Repo 'cube0x0/BofRoast' -DestRoot $script:BofRoot -MakeDir 'BofRoast' }) }
+        @{ Name = 'C2-Tool-Collection';              Tiers = @({ Install-FromSourceBofMake -Name 'C2-Tool-Collection' -Repo 'outflanknl/C2-Tool-Collection' -DestRoot $script:BofRoot -MakeDir 'BOF' -Recursive }) }
         @{ Name = 'CredManBOF';                      Tiers = @({ Install-GitCloneOnly -Name 'CredManBOF' -Repo 'jsecu/CredManBOF' -DestRoot $script:BofRoot }) }
-        @{ Name = 'CS-Situational-Awareness-BOF';    Tiers = @({ Install-GitCloneOnly -Name 'CS-Situational-Awareness-BOF' -Repo 'trustedsec/CS-Situational-Awareness-BOF' -DestRoot $script:BofRoot }) }
-        @{ Name = 'DelegationBOF';                   Tiers = @({ Install-GitCloneOnly -Name 'DelegationBOF' -Repo 'Crypt0s/DelegationBOF' -DestRoot $script:BofRoot }) }
-        @{ Name = 'HandleKatz_BOF';                  Tiers = @({ Install-GitCloneOnly -Name 'HandleKatz_BOF' -Repo 'EspressoCake/HandleKatz_BOF' -DestRoot $script:BofRoot }) }
+        @{ Name = 'CS-Remote-OPs-BOF';               Tiers = @({ Install-GitCloneOnly -Name 'CS-Remote-OPs-BOF' -Repo 'trustedsec/CS-Remote-OPs-BOF' -DestRoot $script:BofRoot }) }
+        @{ Name = 'CS-Situational-Awareness-BOF';    Tiers = @({ Install-GitCloneOnly -Name 'CS-Situational-Awareness-BOF' -Repo 'trustedsec/CS-Situational-Awareness-BOF' -DestRoot $script:BofRoot -MakeDir 'src\SA' -Recursive }) }
+        @{ Name = 'DelegationBOF';                   Tiers = @({ Install-FromSourceBofMake -Name 'DelegationBOF' -Repo 'Crypt0s/DelegationBOF' -DestRoot $script:BofRoot }) }
+        @{ Name = 'HandleKatz_BOF';                  Tiers = @({ Install-FromSourceBofMake -Name 'HandleKatz_BOF' -Repo 'EspressoCake/HandleKatz_BOF' -DestRoot $script:BofRoot -MakeDir 'src' }) }
         @{ Name = 'HOLLOW';                          Tiers = @({ Install-GitCloneOnly -Name 'HOLLOW' -Repo 'boku7/HOLLOW' -DestRoot $script:BofRoot }) }
         @{ Name = 'injectAmsiBypass';                Tiers = @({ Install-GitCloneOnly -Name 'injectAmsiBypass' -Repo 'boku7/injectAmsiBypass' -DestRoot $script:BofRoot }) }
         @{ Name = 'injectEtwBypass';                 Tiers = @({ Install-GitCloneOnly -Name 'injectEtwBypass' -Repo 'boku7/injectEtwBypass' -DestRoot $script:BofRoot }) }
-        @{ Name = 'Kerbeus-BOF';                     Tiers = @({ Install-GitCloneOnly -Name 'Kerbeus-BOF' -Repo 'RalfHacker/Kerbeus-BOF' -DestRoot $script:BofRoot }) }
-        @{ Name = 'nanorobeus';                      Tiers = @({ Install-GitCloneOnly -Name 'nanorobeus' -Repo 'wavvs/nanorobeus' -DestRoot $script:BofRoot }) }
-        @{ Name = 'No-Consolation';                  Tiers = @({ Install-GitCloneOnly -Name 'No-Consolation' -Repo 'fortra/No-Consolation' -DestRoot $script:BofRoot }) }
-        @{ Name = 'OperatorsKit';                    Tiers = @({ Install-GitCloneOnly -Name 'OperatorsKit' -Repo 'REDMED-X/OperatorsKit' -DestRoot $script:BofRoot }) }
-        @{ Name = 'PatchlessInlineExecute-Assembly'; Tiers = @({ Install-GitCloneOnly -Name 'PatchlessInlineExecute-Assembly' -Repo 'VoldeSec/PatchlessInlineExecute-Assembly' -DestRoot $script:BofRoot }) }
-        @{ Name = 'reg_export-BOF';                  Tiers = @({ Install-GitCloneOnly -Name 'reg_export-BOF' -Repo 'Valkyrie-Security/reg_export-BOF' -DestRoot $script:BofRoot }) }
-        @{ Name = 'PoolPartyBof';                    Tiers = @({ Install-GitCloneOnly -Name 'PoolPartyBof' -Repo '0xEr3bus/PoolPartyBof' -DestRoot $script:BofRoot }) }
-        @{ Name = 'SCShell';                         Tiers = @({ Install-GitCloneOnly -Name 'SCShell' -Repo 'Mr-Un1k0d3r/SCShell' -DestRoot $script:BofRoot }) }
-        @{ Name = 'ServiceMove-BOF';                 Tiers = @({ Install-GitCloneOnly -Name 'ServiceMove-BOF' -Repo 'netero1010/ServiceMove-BOF' -DestRoot $script:BofRoot }) }
-        @{ Name = 'secinject';                       Tiers = @({ Install-GitCloneOnly -Name 'secinject' -Repo 'apokryptein/secinject' -DestRoot $script:BofRoot }) }
-        @{ Name = 'tgtdelegation';                   Tiers = @({ Install-GitCloneOnly -Name 'tgtdelegation' -Repo 'connormcgarr/tgtdelegation' -DestRoot $script:BofRoot }) }
-        @{ Name = 'ThreadlessInject-BOF';            Tiers = @({ Install-GitCloneOnly -Name 'ThreadlessInject-BOF' -Repo 'iilegacyyii/ThreadlessInject-BOF' -DestRoot $script:BofRoot }) }
-        @{ Name = 'Unhook-BOF';                      Tiers = @({ Install-GitCloneOnly -Name 'Unhook-BOF' -Repo 'rsmudge/unhook-bof' -DestRoot $script:BofRoot }) }
+        @{ Name = 'Kerbeus-BOF';                     Tiers = @({ Install-FromSourceBofMake -Name 'Kerbeus-BOF' -Repo 'RalfHacker/Kerbeus-BOF' -DestRoot $script:BofRoot }) }
+        @{ Name = 'nanorobeus';                      Tiers = @({ Install-FromSourceBofMake -Name 'nanorobeus' -Repo 'wavvs/nanorobeus' -DestRoot $script:BofRoot }) }
+        @{ Name = 'No-Consolation';                  Tiers = @({ Install-FromSourceBofMake -Name 'No-Consolation' -Repo 'fortra/No-Consolation' -DestRoot $script:BofRoot }) }
+        @{ Name = 'OperatorsKit';                    Tiers = @({ Install-FromSourceBof -Name 'OperatorsKit' -Repo 'REDMED-X/OperatorsKit' -DestRoot $script:BofRoot -BuildScript 'compile-all.bat' }) }
+        @{ Name = 'PatchlessInlineExecute-Assembly'; Tiers = @({ Install-FromSourceBof -Name 'PatchlessInlineExecute-Assembly' -Repo 'VoldeSec/PatchlessInlineExecute-Assembly' -DestRoot $script:BofRoot -BuildScript 'src\compile.bat' }) }
+        @{ Name = 'reg_export-BOF';                  Tiers = @({ Install-FromSourceBofMake -Name 'reg_export-BOF' -Repo 'Valkyrie-Security/reg_export-BOF' -DestRoot $script:BofRoot }) }
+        @{ Name = 'PoolPartyBof';                    Tiers = @({ Install-FromSourceBofMake -Name 'PoolPartyBof' -Repo '0xEr3bus/PoolPartyBof' -DestRoot $script:BofRoot }) }
+        @{ Name = 'SCShell';                         Tiers = @({ Install-FromSourceBofMake -Name 'SCShell' -Repo 'Mr-Un1k0d3r/SCShell' -DestRoot $script:BofRoot -MakeDir 'CS-BOF' }) }
+        @{ Name = 'ServiceMove-BOF';                 Tiers = @({ Install-FromSourceBofMake -Name 'ServiceMove-BOF' -Repo 'netero1010/ServiceMove-BOF' -DestRoot $script:BofRoot }) }
+        @{ Name = 'secinject';                       Tiers = @({ Install-FromSourceBofMake -Name 'secinject' -Repo 'apokryptein/secinject' -DestRoot $script:BofRoot -MakeDir 'src' }) }
+        @{ Name = 'tgtdelegation';                   Tiers = @({ Install-FromSourceBofMake -Name 'tgtdelegation' -Repo 'connormcgarr/tgtdelegation' -DestRoot $script:BofRoot }) }
+        # Verified end-to-end (compile error + strip lookup fixed via CC_x64/STRIP_x64 overrides).
+        @{ Name = 'ThreadlessInject-BOF';            Tiers = @({ Install-FromSourceBofMake -Name 'ThreadlessInject-BOF' -Repo 'iilegacyyii/ThreadlessInject-BOF' -DestRoot $script:BofRoot }) }
+        @{ Name = 'Unhook-BOF';                      Tiers = @({ Install-FromSourceBof -Name 'Unhook-BOF' -Repo 'rsmudge/unhook-bof' -DestRoot $script:BofRoot }) }
 
         # --- [Sharp]/[SharpTool]-tagged tools -> C:\Tools\SharpTools (build via MSBuild) ---
         @{ Name = 'ADSearch';           Tiers = @({ Install-FromSourceDotNet -Name 'ADSearch' -Repo 'tomcarver16/ADSearch' -DestRoot $script:SharpToolsRoot }) }
@@ -1659,19 +2333,28 @@ function Get-PackageTable {
         # target the C# project directly instead. It only builds as x64, not AnyCPU.
         @{ Name = 'SpoolSample';        Tiers = @({ Install-FromSourceDotNet -Name 'SpoolSample' -Repo 'leechristensen/SpoolSample' -DestRoot $script:SharpToolsRoot -SlnPath 'SpoolSample\SpoolSample.csproj' -Platform 'x64' }) }
         @{ Name = 'ThreatCheck';        Tiers = @({ Install-FromSourceDotNet -Name 'ThreatCheck' -Repo 'rasta-mouse/ThreatCheck' -DestRoot $script:SharpToolsRoot }) }
+        @{ Name = 'BadAssMacros';       Tiers = @({ Install-FromSourceDotNet -Name 'BadAssMacros' -Repo 'Inf0secRabbit/BadAssMacros' -DestRoot $script:SharpToolsRoot }) }
 
         # --- [Cloud]-tagged tools -> C:\Tools\Cloud ---
         @{ Name = 'MicroBurst';     Tiers = @({ Install-GitCloneOnly -Name 'MicroBurst' -Repo 'NetSPI/MicroBurst' -DestRoot $script:CloudRoot }) }
-        @{ Name = 'TeamFiltration'; Tiers = @({ Install-GitCloneOnly -Name 'TeamFiltration' -Repo 'Flangvik/TeamFiltration' -DestRoot $script:CloudRoot }) }
-        @{ Name = 'ADConnectDump';  Tiers = @({ Install-GitCloneOnly -Name 'ADConnectDump' -Repo 'dirkjanm/adconnectdump' -DestRoot $script:CloudRoot }) }
+        @{ Name = 'TeamFiltration'; Tiers = @({ Install-FromSourceDotNet -Name 'TeamFiltration' -Repo 'Flangvik/TeamFiltration' -DestRoot $script:CloudRoot }) }
+        @{ Name = 'ADConnectDump';  Tiers = @({ Install-FromSourceDotNet -Name 'ADConnectDump' -Repo 'dirkjanm/adconnectdump' -DestRoot $script:CloudRoot }) }
 
         # --- [Potato]-tagged privesc tools -> C:\Tools\PotatoFarm ---
-        @{ Name = 'Hot-Potato';     Tiers = @({ Install-GitCloneOnly -Name 'Hot-Potato' -Repo 'davidmbillie/Hot-Potato' -DestRoot $script:PotatoRoot }) }
-        @{ Name = 'RottenPotato';   Tiers = @({ Install-GitCloneOnly -Name 'RottenPotato' -Repo 'foxglovesec/RottenPotato' -DestRoot $script:PotatoRoot }) }
-        @{ Name = 'juicy-potato';   Tiers = @({ Install-GitCloneOnly -Name 'juicy-potato' -Repo 'ohpe/juicy-potato' -DestRoot $script:PotatoRoot }) }
-        @{ Name = 'RoguePotato';    Tiers = @({ Install-GitCloneOnly -Name 'RoguePotato' -Repo 'antonioCoco/RoguePotato' -DestRoot $script:PotatoRoot }) }
-        @{ Name = 'SweetPotato';    Tiers = @({ Install-GitCloneOnly -Name 'SweetPotato' -Repo 'CCob/SweetPotato' -DestRoot $script:PotatoRoot }) }
-        @{ Name = 'GenericPotato';  Tiers = @({ Install-GitCloneOnly -Name 'GenericPotato' -Repo 'micahvandeusen/GenericPotato' -DestRoot $script:PotatoRoot }) }
+        @{ Name = 'Hot-Potato';     Tiers = @({ Install-FromSourceDotNet -Name 'Hot-Potato' -Repo 'davidmbillie/Hot-Potato' -DestRoot $script:PotatoRoot }) }
+        # RottenPotato bundles NHttp and SharpCifs as separate .sln's it links against
+        # rather than solution-referenced projects (its README has them built, then
+        # ILMerge'd together) - build all three, in dependency order, before Potato.sln.
+        @{ Name = 'RottenPotato';   Tiers = @({
+            $nhttp = Install-FromSourceDotNet -Name 'RottenPotato' -Repo 'foxglovesec/RottenPotato' -DestRoot $script:PotatoRoot -SlnPath 'NHttp\NHttp.sln'
+            $cifs  = Install-FromSourceDotNet -Name 'RottenPotato' -Repo 'foxglovesec/RottenPotato' -DestRoot $script:PotatoRoot -SlnPath 'SharpCifs\SharpCifs.sln'
+            $main  = Install-FromSourceDotNet -Name 'RottenPotato' -Repo 'foxglovesec/RottenPotato' -DestRoot $script:PotatoRoot -SlnPath 'Potato\Potato.sln'
+            $nhttp -and $cifs -and $main
+        }) }
+        @{ Name = 'juicy-potato';   Tiers = @({ Install-FromSourceNative -Name 'juicy-potato' -Repo 'ohpe/juicy-potato' -DestRoot $script:PotatoRoot -SlnPath 'JuicyPotato\JuicyPotato.sln' }) }
+        @{ Name = 'RoguePotato';    Tiers = @({ Install-FromSourceNative -Name 'RoguePotato' -Repo 'antonioCoco/RoguePotato' -DestRoot $script:PotatoRoot -SlnPath 'RoguePotato.sln' }) }
+        @{ Name = 'SweetPotato';    Tiers = @({ Install-FromSourceDotNet -Name 'SweetPotato' -Repo 'CCob/SweetPotato' -DestRoot $script:PotatoRoot }) }
+        @{ Name = 'GenericPotato';  Tiers = @({ Install-FromSourceDotNet -Name 'GenericPotato' -Repo 'micahvandeusen/GenericPotato' -DestRoot $script:PotatoRoot }) }
         @{ Name = 'GodPotato';      Tiers = @({ Install-GitCloneOnly -Name 'GodPotato' -Repo 'BeichenDream/GodPotato' -DestRoot $script:PotatoRoot }) }
 
         # --- Nim modules -> C:\Tools\nimmods ---
@@ -1682,20 +2365,42 @@ function Get-PackageTable {
         @{ Name = 'nimbus';         Tiers = @({ Install-GitCloneOnly -Name 'nimbus' -Repo 'D3Ext/Nimbus' -DestRoot $script:NimModsRoot }) }
         @{ Name = 'partyloader';    Tiers = @({ Install-GitCloneOnly -Name 'partyloader' -Repo 'itaymigdal/PartyLoader' -DestRoot $script:NimModsRoot }) }
 
-        # --- Untagged repos from verify-packages.md -> default C:\Tools\src ---
+        # --- Install From Source -> default C:\Tools\ ---
+        # Repo ships two variants (EXE loader + DLL loaded via rundll32) as separate solutions -
+        # build both, same pattern as RottenPotato/RedTeamGrimoire above.
+        @{ Name = 'Dumpert';                  Tiers = @({
+            $exe = Install-FromSourceNative -Name 'Dumpert' -Repo 'outflanknl/Dumpert' -SlnPath 'Dumpert\Outflank-Dumpert.sln'
+            $dll = Install-FromSourceNative -Name 'Dumpert' -Repo 'outflanknl/Dumpert' -SlnPath 'Dumpert-DLL\Outflank-Dumpert-DLL.sln'
+            $exe -and $dll
+        }) }
+        @{ Name = 'IIS-Raid';                 Tiers = @({ Install-FromSourceNative -Name 'IIS-Raid' -Repo '0x09AL/IIS-Raid' -SlnPath 'module\IIS-Backdoor.sln' }) }
+        @{ Name = 'PortBender';               Tiers = @({ Install-FromSourceNative -Name 'PortBender' -Repo 'praetorian-inc/PortBender' -SlnPath 'src\PortBender\PortBender.sln' }) }
+        # RedTeamGrimoire bundles two unrelated tools (Charon, Doppelganger), each shipped as
+        # several variants (legacy, no-CRT, XObolos) with their own .sln/.vcxproj under one repo -
+        # build each variant against the shared clone, same pattern as RottenPotato above.
+        # Release config is pinned to x64 in this repo, not AnyCPU.
+        # Charon_ExternalPayloadVersion ships no .sln/.vcxproj (source-only) - not buildable here.
+        @{ Name = 'RedTeamGrimoire';          Tiers = @({
+            $charonLegacy  = Install-FromSourceNative -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' -SlnPath 'Charon\Charon_v1_Legacy\Charon\Charon.vcxproj' -Platform x64
+            $doppelXObolos = Install-FromSourceNative -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' -SlnPath 'Doppelganger\DoppelgangerXObolos\Doppelganger.sln' -Platform x64
+            $doppelNoCrt   = Install-FromSourceNative -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' -SlnPath 'Doppelganger\Doppelganger_noCRT\Doppelganger.sln' -Platform x64
+            $doppelLegacy  = Install-FromSourceNative -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' -SlnPath 'Doppelganger\Doppelganger_v1_Legacy\Doppelganger.sln' -Platform x64
+            $charonLegacy -and $doppelXObolos -and $doppelNoCrt -and $doppelLegacy
+        }) }
+        @{ Name = 'StreamDivert';             Tiers = @({ Install-FromSourceNative -Name 'StreamDivert' -Repo 'jellever/StreamDivert' -SlnPath 'StreamDivert.sln' }) }
+
+        # --- Untagged repos from verify-packages.md -> default C:\Tools\ ---
         @{ Name = 'AdaptixC2';                Tiers = @({ Install-GitCloneOnly -Name 'AdaptixC2' -Repo 'Adaptix-Framework/AdaptixC2' }) }
-        @{ Name = 'BadAssMacros';             Tiers = @({ Install-GitCloneOnly -Name 'BadAssMacros' -Repo 'Inf0secRabbit/BadAssMacros' }) }
         @{ Name = 'BloodHound-Custom-Queries'; Tiers = @({ Install-GitCloneOnly -Name 'BloodHound-Custom-Queries' -Repo 'CompassSecurity/BloodHoundQueries' }) }
         @{ Name = 'Crystal-Loaders';          Tiers = @({ Install-GitCloneOnly -Name 'Crystal-Loaders' -Repo 'rasta-mouse/Crystal-Loaders' }) }
-        @{ Name = 'CS-Loader';                Tiers = @({ Install-GitCloneOnly -Name 'CS-Loader' -Repo 'Gality369/CS-Loader' }) }
-        @{ Name = 'Dumpert';                  Tiers = @({ Install-GitCloneOnly -Name 'Dumpert' -Repo 'outflanknl/Dumpert' }) }
+        @{ Name = 'CS-Loader';                Tiers = @({ Install-GitCloneOnly -Name 'CS-Loader' -Repo 'Gality369/CS-Loader' }) }       
         @{ Name = 'EvilClippy';               Tiers = @({ Install-GitCloneOnly -Name 'EvilClippy' -Repo 'outflanknl/EvilClippy' }) }
         @{ Name = 'Freeze';                   Tiers = @({ Install-FromSourceRust -Name 'Freeze' -Repo 'Tylous/Freeze' -Target 'x86_64-pc-windows-gnu' }) }
         @{ Name = 'Get-LAPSPasswords';        Tiers = @({ Install-GitCloneOnly -Name 'Get-LAPSPasswords' -Repo 'kfosaaen/Get-LAPSPasswords' }) }
         @{ Name = 'go-cookie-monster';        Tiers = @({ Install-FromSourceGo -Name 'go-cookie-monster' -Repo 'c2biz/go-cookie-monster' -Env @{ CGO_ENABLED = '1'; GOARCH = 'amd64'; GOOS = 'windows' } }) }
         @{ Name = 'GoBuster';                 Tiers = @({ Install-GoInstall -Name 'GoBuster' -Package 'github.com/OJ/gobuster/v3@latest' }) }
         @{ Name = 'GoWitness';                Tiers = @({ Install-GoInstall -Name 'GoWitness' -Package 'github.com/sensepost/gowitness@latest' }) }
-        @{ Name = 'IIS-Raid';                 Tiers = @({ Install-GitCloneOnly -Name 'IIS-Raid' -Repo '0x09AL/IIS-Raid' }) }
+        
         @{ Name = 'Invoke-DOSfuscation';      Tiers = @({ Install-GitCloneOnly -Name 'Invoke-DOSfuscation' -Repo 'danielbohannon/Invoke-DOSfuscation' }) }
         @{ Name = 'Invoke-Obfuscation';       Tiers = @({ Install-GitCloneOnly -Name 'Invoke-Obfuscation' -Repo 'danielbohannon/Invoke-Obfuscation' }) }
         @{ Name = 'Kerbrute';                 Tiers = @({ Install-GoInstall -Name 'Kerbrute' -Package 'github.com/ropnop/kerbrute@latest' }) }
@@ -1703,16 +2408,14 @@ function Get-PackageTable {
         @{ Name = 'MailSniper';               Tiers = @({ Install-GitCloneOnly -Name 'MailSniper' -Repo 'dafthack/MailSniper' }) }
         @{ Name = 'MFASweep';                 Tiers = @({ Install-GitCloneOnly -Name 'MFASweep' -Repo 'dafthack/MFASweep' }) }
         @{ Name = 'PetitPotam';               Tiers = @({ Install-GitCloneOnly -Name 'PetitPotam' -Repo 'topotam/PetitPotam' }) }
-        @{ Name = 'PortBender';               Tiers = @({ Install-GitCloneOnly -Name 'PortBender' -Repo 'praetorian-inc/PortBender' }) }
         @{ Name = 'PowerMad';                 Tiers = @({ Install-GitCloneOnly -Name 'PowerMad' -Repo 'Kevin-Robertson/Powermad' }) }
         @{ Name = 'PowerUpSQL';               Tiers = @({ Install-GitCloneOnly -Name 'PowerUpSQL' -Repo 'NetSPI/PowerUpSQL' }) }
         @{ Name = 'PSPKIAudit';               Tiers = @({ Install-GitCloneOnly -Name 'PSPKIAudit' -Repo 'GhostPack/PSPKIAudit' }) }
         @{ Name = 'RustHound-CE';             Tiers = @({ Install-FromSourceRust -Name 'RustHound-CE' -Repo 'g0h4n/RustHound-CE' -Target 'x86_64-pc-windows-gnu' }) }
         @{ Name = 'rustyneedle';              Tiers = @({ Install-FromSourceRust -Name 'rustyneedle' -Repo 'mttaggart/rustyneedle' -Target 'x86_64-pc-windows-gnu' }) }
         @{ Name = 'Stracciatella';            Tiers = @({ Install-GitCloneOnly -Name 'Stracciatella' -Repo 'mgeeky/Stracciatella' }) }
-        @{ Name = 'StreamDivert';             Tiers = @({ Install-GitCloneOnly -Name 'StreamDivert' -Repo 'jellever/StreamDivert' }) }
         @{ Name = 'SuperMega';                Tiers = @({ Install-GitCloneOnly -Name 'SuperMega' -Repo 'dobin/SuperMega' -PipRequirements }) }
-        @{ Name = 'upx';                      Tiers = @({ Install-GitCloneOnly -Name 'upx' -Repo 'upx/upx' }) }
+        @{ Name = 'upx';                      Tiers = @({ Install-FromSourceCMake -Name 'upx' -Repo 'upx/upx' -SubModule -Generator 'Visual Studio 17 2022' -Architecture x64 }) }
     )
 }
 
@@ -1735,7 +2438,9 @@ function Show-Summary {
 function Initialize-Environment {
     $script:ToolsRoot      = 'C:\Tools'
     $script:PayloadRoot    = 'C:\Payloads'
-    $script:BinRoot        = Join-Path $script:ToolsRoot 'bin'
+    $script:UserProfileRoot = $env:USERPROFILE
+    $script:AppDataLocal    = Join-Path $script:UserProfileRoot 'AppData\Local'
+    $script:GoUserRoot      = Join-Path $script:UserProfileRoot 'go'
     $script:DlRoot         = Join-Path $script:ToolsRoot 'downloads'
     $script:BofRoot        = Join-Path $script:ToolsRoot 'BOF'
     $script:SharpToolsRoot = Join-Path $script:ToolsRoot 'SharpTools'
@@ -1750,7 +2455,7 @@ function Initialize-Environment {
 
 
     $allDirs = @(
-        $script:ToolsRoot, $script:PayloadRoot, $script:BinRoot, $script:DlRoot, $script:LogRoot,
+        $script:ToolsRoot, $script:PayloadRoot, $script:DlRoot, $script:LogRoot,
         $script:BofRoot, $script:SharpToolsRoot, $script:CloudRoot, $script:PotatoRoot, $script:NimModsRoot
     )
     foreach ($dir in $allDirs) {
@@ -1839,6 +2544,8 @@ function Invoke-Stage4 {
     Install-NimPackages
 
     Install-AllPackages
+    Set-QuickAccess
+    Set-Background
     Unregister-ContinuationTask
     Show-Summary
     try { Stop-Transcript | Out-Null } catch {}
@@ -1863,7 +2570,7 @@ function Install-AllPackages {
 
         if (-not $done) {
             Write-Status "[x] [$name] all install tiers failed - skipping" 'Red'
-            Record-Result -Name $name -Status Skipped -Detail 'Failed'
+            Add-Result -Name $name -Status Skipped -Detail 'Failed'
         }
     }
 }
