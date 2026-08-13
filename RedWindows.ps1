@@ -1052,6 +1052,19 @@ function Restore-PackagesConfigFolders {
     }
 }
 
+function Resolve-GitCloneUrl {
+    # Lets $Repo be either a "owner/repo" shorthand (resolved against github.com)
+    # or a full URL (e.g. a Gitea instance) passed through as-is.
+    param(
+        [string]$Repo
+    )
+
+    if ($Repo -match '^[a-zA-Z][a-zA-Z0-9+.-]*://') {
+        return $Repo
+    }
+    return "https://github.com/$Repo.git"
+}
+
 function Update-GitSubmodules {
     param(
         [string]$Name,
@@ -1090,7 +1103,7 @@ function Install-FromSourceDotNet {
                 git -C $cloneDir pull
             }
         } else {
-            git clone "https://github.com/$Repo.git" $cloneDir
+            git clone (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
         }
         if ($LASTEXITCODE -ne 0) {
             Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
@@ -1223,7 +1236,7 @@ function Install-GitCloneOnly {
         if (Test-Path $cloneDir) {
             git -C $cloneDir pull --quiet
         } else {
-            git clone --quiet "https://github.com/$Repo.git" $cloneDir
+            git clone --quiet (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
         }
     } catch {
         Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
@@ -1278,7 +1291,7 @@ function Install-FromSourceGo {
         if (Test-Path $cloneDir) {
             git -C $cloneDir pull --quiet
         } else {
-            git clone --quiet "https://github.com/$Repo.git" $cloneDir
+            git clone --quiet (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
         }
     } catch {
         Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
@@ -1369,7 +1382,7 @@ function Install-FromSourceRust {
         if (Test-Path $cloneDir) {
             git -C $cloneDir pull --quiet
         } else {
-            git clone --quiet "https://github.com/$Repo.git" $cloneDir
+            git clone --quiet (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
         }
     } catch {
         Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
@@ -1455,7 +1468,7 @@ function Install-FromSourceCMake {
                 git -C $cloneDir pull
             }
         } else {
-            git clone "https://github.com/$Repo.git" $cloneDir
+            git clone (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
         }
         if ($LASTEXITCODE -ne 0) {
             Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
@@ -1545,7 +1558,7 @@ function Install-FromSourceBof {
                 git -C $cloneDir pull
             }
         } else {
-            git clone "https://github.com/$Repo.git" $cloneDir
+            git clone (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
         }
         if ($LASTEXITCODE -ne 0) {
             Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
@@ -1642,7 +1655,7 @@ function Install-FromSourceBofMake {
                 git -C $cloneDir pull
             }
         } else {
-            git clone "https://github.com/$Repo.git" $cloneDir
+            git clone (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
         }
         if ($LASTEXITCODE -ne 0) {
             Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
@@ -1774,7 +1787,7 @@ function Install-FromSourceNative {
                 git -C $cloneDir pull
             }
         } else {
-            git clone "https://github.com/$Repo.git" $cloneDir
+            git clone (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
         }
         if ($LASTEXITCODE -ne 0) {
             Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
@@ -2584,8 +2597,18 @@ function Get-PackageTable {
         @{ Name = 'Stracciatella';            Tiers = @({ Install-GitCloneOnly -Name 'Stracciatella' -Repo 'mgeeky/Stracciatella' }) }
         @{ Name = 'SuperMega';                Tiers = @({ Install-GitCloneOnly -Name 'SuperMega' -Repo 'dobin/SuperMega' -PipRequirements }) }
         @{ Name = 'upx';                      Tiers = @({ Install-FromSourceCMake -Name 'upx' -Repo 'upx/upx' -SubModule -Generator 'Visual Studio 17 2022' -Architecture x64 }) }
+        @{ Name = 'ShieldBreak';              Tiers = @({ Install-GitCloneOnly -Name 'ShieldBreak' -Repo 'https://git.churchofmalware.org/Nightmare_Eclipse/ShieldBreak.git'  -DestRoot $script:NightmareEclipse }) }
+        @{ Name = 'GreatXML';                 Tiers = @({ Install-GitCloneOnly -Name 'GreatXML' -Repo 'https://git.churchofmalware.org/Nightmare_Eclipse/GreatXML.git'  -DestRoot $script:NightmareEclipse }) }
+        @{ Name = 'GreenPlasma';              Tiers = @({ Install-GitCloneOnly -Name 'GreenPlasma' -Repo 'https://git.churchofmalware.org/Nightmare_Eclipse/GreenPlasma.git'  -DestRoot $script:NightmareEclipse }) }
+        @{ Name = 'UnDefend';                 Tiers = @({ Install-GitCloneOnly -Name 'UnDefend' -Repo 'https://git.churchofmalware.org/Nightmare_Eclipse/UnDefend.git'  -DestRoot $script:NightmareEclipse }) }
+        @{ Name = 'BlueHammer';               Tiers = @({ Install-GitCloneOnly -Name 'BlueHammer' -Repo 'https://git.churchofmalware.org/Nightmare_Eclipse/BlueHammer.git'  -DestRoot $script:NightmareEclipse }) }
+        @{ Name = 'YellowKey.';               Tiers = @({ Install-GitCloneOnly -Name 'YellowKey.' -Repo 'https://git.churchofmalware.org/Nightmare_Eclipse/YellowKey.git '  -DestRoot $script:NightmareEclipse }) }
+        @{ Name = 'MiniPlasma';               Tiers = @({ Install-GitCloneOnly -Name 'MiniPlasma' -Repo 'https://git.churchofmalware.org/Nightmare_Eclipse/MiniPlasma.git'  -DestRoot $script:NightmareEclipse }) }
+        @{ Name = 'RedSun';                   Tiers = @({ Install-GitCloneOnly -Name 'RedSun' -Repo 'https://git.churchofmalware.org/Nightmare_Eclipse/RedSun.git'  -DestRoot $script:NightmareEclipse }) }
+        @{ Name = 'ShieldBreak';              Tiers = @({ Install-GitCloneOnly -Name 'ShieldBreak' -Repo 'https://git.churchofmalware.org/Nightmare_Eclipse/ShieldBreak.git'  -DestRoot $script:NightmareEclipse }) }
     )
-}
+}   
+
 
 function Show-Summary {
     Write-Status "`n=== Summary (all stages) ===" 'Magenta'
