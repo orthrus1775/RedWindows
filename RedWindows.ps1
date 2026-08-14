@@ -1268,6 +1268,30 @@ function Install-GitCloneOnly {
     return $true
 }
 
+function Get-RemoteFile {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Url,
+        [Parameter(Mandatory)]
+        [string]$Destination
+    )
+
+    $destDir = Split-Path -Path $Destination -Parent
+    if ($destDir -and -not (Test-Path $destDir)) {
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    }
+
+    Write-Status "[-] [Download] $Url -> $Destination" 'Cyan'
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+        Write-Status "[+] [Download] saved $Destination" 'Green'
+        return $true
+    } catch {
+        Write-Status "[!] [Download] failed: $($_.Exception.Message)" 'Yellow'
+        return $false
+    }
+}
+
 function Update-SessionPath {
     $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
     $userPath    = [Environment]::GetEnvironmentVariable('Path', 'User')
@@ -2606,6 +2630,11 @@ function Get-PackageTable {
         @{ Name = 'MiniPlasma';               Tiers = @({ Install-GitCloneOnly -Name 'MiniPlasma' -Repo 'https://git.churchofmalware.org/Nightmare_Eclipse/MiniPlasma.git'  -DestRoot $script:NightmareEclipse }) }
         @{ Name = 'RedSun';                   Tiers = @({ Install-GitCloneOnly -Name 'RedSun' -Repo 'https://git.churchofmalware.org/Nightmare_Eclipse/RedSun.git'  -DestRoot $script:NightmareEclipse }) }
         @{ Name = 'ShieldBreak';              Tiers = @({ Install-GitCloneOnly -Name 'ShieldBreak' -Repo 'https://git.churchofmalware.org/Nightmare_Eclipse/ShieldBreak.git'  -DestRoot $script:NightmareEclipse }) }
+        @{ Name = 'RegPwn';                   Tiers = @({ Install-FromSourceNative -Name 'RegPwn' -Repo 'mdsecactivebreach/RegPwn' -DestRoot $script:SharpToolsRoot -SlnPath 'RegPwn\RegPwn.sln' }) }
+        @{ Name = 'RegPwnBOF';                Tiers = @({ Install-GitCloneOnly -Name 'RegPwnBOF' -Repo 'Flangvik/RegPwnBOF' -DestRoot $script:BofRoot }) }
+        @{ Name = 'eicar.com';                Tiers = @({ Get-RemoteFile -Url 'https://secure.eicar.org/eicar_com.zip' -Destination (Join-Path $script:ToolsRoot 'eicar_com.zip') }) }
+        @{ Name = 'eicar.txt';                Tiers = @({ Get-RemoteFile -Url 'https://secure.eicar.org/eicar.com.txt' -Destination (Join-Path $script:ToolsRoot 'eicar_com.txt') }) }
+        @{ Name = 'eicar.com2';                Tiers = @({ Get-RemoteFile -Url 'https://secure.eicar.org/eicar_com2.zip' -Destination (Join-Path $script:ToolsRoot 'eicar_com-2.zip') }) }
     )
 }   
 
@@ -2635,6 +2664,7 @@ function Initialize-Environment {
     $script:DlRoot         = Join-Path $script:ToolsRoot 'downloads'
     $script:BofRoot        = Join-Path $script:ToolsRoot 'BOF'
     $script:SharpToolsRoot = Join-Path $script:ToolsRoot 'SharpTools'
+    $script:NightmareEclipse = Join-Path $script:ToolsRoot 'NightmareEclipse'
     $script:CloudRoot      = Join-Path $script:ToolsRoot 'Cloud'
     $script:PotatoRoot     = Join-Path $script:ToolsRoot 'PotatoFarm'
     $script:NimModsRoot    = Join-Path $script:ToolsRoot 'nimmods'

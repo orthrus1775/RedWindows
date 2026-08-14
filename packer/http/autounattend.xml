@@ -1,0 +1,168 @@
+<?xml version="1.0" encoding="utf-8"?>
+<unattend xmlns="urn:schemas-microsoft-com:unattend" xmlns:wcm="http://schemas.microsoft.com/WMIConfig/2002/State">
+
+  <!-- windowsPE: disk layout, product key entry, locale -->
+  <settings pass="windowsPE">
+    <component name="Microsoft-Windows-International-Core-WinPE" processorArchitecture="amd64"
+                publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <SetupUILanguage>
+        <UILanguage>en-US</UILanguage>
+      </SetupUILanguage>
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+    <component name="Microsoft-Windows-Setup" processorArchitecture="amd64"
+                publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <DiskConfiguration>
+        <Disk wcm:action="add">
+          <CreatePartitions>
+            <CreatePartition wcm:action="add">
+              <Order>1</Order>
+              <Type>Primary</Type>
+              <Size>350</Size>
+            </CreatePartition>
+            <CreatePartition wcm:action="add">
+              <Order>2</Order>
+              <Type>Primary</Type>
+              <Extend>true</Extend>
+            </CreatePartition>
+          </CreatePartitions>
+          <ModifyPartitions>
+            <ModifyPartition wcm:action="add">
+              <Order>1</Order>
+              <PartitionID>1</PartitionID>
+              <Format>NTFS</Format>
+              <Label>System Reserved</Label>
+              <Active>true</Active>
+              <TypeID>0x27</TypeID>
+            </ModifyPartition>
+            <ModifyPartition wcm:action="add">
+              <Order>2</Order>
+              <PartitionID>2</PartitionID>
+              <Format>NTFS</Format>
+              <Label>Windows</Label>
+              <Letter>C</Letter>
+            </ModifyPartition>
+          </ModifyPartitions>
+          <DiskID>0</DiskID>
+          <WillWipeDisk>true</WillWipeDisk>
+        </Disk>
+        <WillShowUI>OnError</WillShowUI>
+      </DiskConfiguration>
+      <ImageInstall>
+        <OSImage>
+          <InstallFrom>
+            <MetaData wcm:action="add">
+              <Key>/IMAGE/NAME</Key>
+              <Value>Windows 10 Pro</Value>
+            </MetaData>
+          </InstallFrom>
+          <InstallTo>
+            <DiskID>0</DiskID>
+            <PartitionID>2</PartitionID>
+          </InstallTo>
+          <WillShowUI>OnError</WillShowUI>
+        </OSImage>
+      </ImageInstall>
+      <UserData>
+        <AcceptEula>true</AcceptEula>
+        <ProductKey>
+          <!-- Public Microsoft KMS client setup key for Windows 10 Pro - not an
+               activation bypass, just tells a multi-edition install.wim which
+               edition to lay down. https://learn.microsoft.com/windows-server/get-started/kms-client-activation-keys -->
+          <Key>W269N-WFGWX-YVC9B-4J6C9-T83GX</Key>
+          <WillShowUI>Never</WillShowUI>
+        </ProductKey>
+      </UserData>
+    </component>
+  </settings>
+
+  <!-- specialize: computer name, timezone, activate WinRM as early as possible -->
+  <settings pass="specialize">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
+                publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <ComputerName>redwin10</ComputerName>
+      <TimeZone>UTC</TimeZone>
+    </component>
+    <component name="Microsoft-Windows-Deployment" processorArchitecture="amd64"
+                publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <RunSynchronous>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <Path>cmd.exe /c winrm quickconfig -q</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>2</Order>
+          <Path>cmd.exe /c winrm set winrm/config/service/auth @{Basic="true"}</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>3</Order>
+          <Path>cmd.exe /c winrm set winrm/config/service @{AllowUnencrypted="true"}</Path>
+        </RunSynchronousCommand>
+        <RunSynchronousCommand wcm:action="add">
+          <Order>4</Order>
+          <Path>cmd.exe /c netsh advfirewall firewall add rule name="WinRM 5985" protocol=TCP dir=in localport=5985 action=allow</Path>
+        </RunSynchronousCommand>
+      </RunSynchronous>
+    </component>
+  </settings>
+
+  <!-- oobeSystem: skip OOBE prompts, create the local admin account Packer connects as -->
+  <settings pass="oobeSystem">
+    <component name="Microsoft-Windows-Shell-Setup" processorArchitecture="amd64"
+                publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <OOBE>
+        <HideEULAPage>true</HideEULAPage>
+        <HideOEMRegistrationScreen>true</HideOEMRegistrationScreen>
+        <HideOnlineAccountScreens>true</HideOnlineAccountScreens>
+        <HideWirelessSetupInOOBE>true</HideWirelessSetupInOOBE>
+        <NetworkLocation>Work</NetworkLocation>
+        <ProtectYourPC>3</ProtectYourPC>
+        <SkipMachineOOBE>true</SkipMachineOOBE>
+        <SkipUserOOBE>true</SkipUserOOBE>
+      </OOBE>
+      <UserAccounts>
+        <AdministratorPassword>
+          <Value>GoCyber2026!!</Value>
+          <PlainText>true</PlainText>
+        </AdministratorPassword>
+        <LocalAccounts>
+          <LocalAccount wcm:action="add">
+            <Name>attacker</Name>
+            <Group>Administrators</Group>
+            <Password>
+              <Value>GoCyber2026!!</Value>
+              <PlainText>true</PlainText>
+            </Password>
+          </LocalAccount>
+        </LocalAccounts>
+      </UserAccounts>
+      <AutoLogon>
+        <Enabled>true</Enabled>
+        <LogonCount>10</LogonCount>
+        <Username>attacker</Username>
+        <Password>
+          <Value>GoCyber2026!!</Value>
+          <PlainText>true</PlainText>
+        </Password>
+      </AutoLogon>
+      <FirstLogonCommands>
+        <SynchronousCommand wcm:action="add">
+          <Order>1</Order>
+          <CommandLine>powershell -NoProfile -ExecutionPolicy Bypass -File a:\enable-winrm.ps1</CommandLine>
+          <Description>Finalize WinRM so Packer can connect</Description>
+        </SynchronousCommand>
+      </FirstLogonCommands>
+    </component>
+    <component name="Microsoft-Windows-International-Core" processorArchitecture="amd64"
+                publicKeyToken="31bf3856ad364e35" language="neutral" versionScope="nonSxS">
+      <InputLocale>en-US</InputLocale>
+      <SystemLocale>en-US</SystemLocale>
+      <UILanguage>en-US</UILanguage>
+      <UserLocale>en-US</UserLocale>
+    </component>
+  </settings>
+
+</unattend>

@@ -2,3 +2,10 @@ RedWindows-results.csv
 RedWindows-Transcript*
 Build_instructions.md
 verify-packages.md
+
+# Packer
+packer/output-*/
+packer/packer_cache/
+packer/*.log
+*.pkrvars.hcl
+!example.pkrvars.hcl
