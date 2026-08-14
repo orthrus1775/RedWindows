@@ -20,6 +20,10 @@ in the summary rather than stopping the run.
 
 $ErrorActionPreference = 'Stop'
 
+# TEMPORARY: set to $true to pause and require Enter before each stage's reboot,
+# so you can validate the box's state before it moves on. Remove before shipping.
+$script:EnableStageBreakpoints = $true
+
 # =============================================================================
 # Logging / result tracking
 # =============================================================================
@@ -142,6 +146,12 @@ function Disable-WindowsDefender {
     try {
         Add-MpPreference -ExclusionPath $script:GoUserRoot -ErrorAction Stop
         Write-Status "[+] Exclusion added for $script:GoUserRoot" 'Green'
+    } catch {
+        Write-Status "[!] Add-MpPreference exclusion failed: $($_.Exception.Message)" 'Yellow'
+    }
+        try {
+        Add-MpPreference -ExclusionPath $script:pipxtools -ErrorAction Stop
+        Write-Status "[+] Exclusion added for $script:pipxtools" 'Green'
     } catch {
         Write-Status "[!] Add-MpPreference exclusion failed: $($_.Exception.Message)" 'Yellow'
     }
@@ -568,6 +578,16 @@ function Unregister-ContinuationTask {
     }
 }
 
+function Wait-ForStageBreakpoint {
+    param(
+        [string]$Message = 'Validate the box, then press Enter to restart...'
+    )
+    if ($script:EnableStageBreakpoints) {
+        Write-Status "[?] [Breakpoint] $Message" 'Yellow'
+        Read-Host | Out-Null
+    }
+}
+
 function Complete-Installation {
     Unregister-ContinuationTask
     Disable-AutoLogin
@@ -575,6 +595,7 @@ function Complete-Installation {
     Show-Summary
     Start-Sleep -Seconds 300
     Write-Status "`n=== Stage complete - restarting to continue as stage $NextStage ===" 'Magenta'
+    Wait-ForStageBreakpoint
     Start-Sleep -Seconds 30
     Restart-Computer -Force
 }
@@ -592,6 +613,7 @@ function Complete-Stage {
     # Flush the transcript to disk before the forced restart kills this process - the next
     # stage's Start-Transcript -Append picks back up in the same file.
     try { Stop-Transcript | Out-Null } catch {}
+    Wait-ForStageBreakpoint -Message "Validate stage before continuing to stage $NextStage, then press Enter to restart..."
     Start-Sleep -Seconds 30
     Restart-Computer -Force
 }
@@ -1902,7 +1924,11 @@ function Install-Pipx {
 
     Write-Status "[-] [pipx] pip install pipx" 'Cyan'
 
-    python -m pip install pipx
+    # Same stderr-becomes-terminating-error issue Invoke-NativeQuiet's comment describes -
+    # pip's "WARNING: The script pipx.exe is installed in '...' which is not on PATH" line
+    # goes to stderr on a fresh install and would otherwise abort this function before
+    # ensurepath ever runs, leaving pipx.exe on disk but unreachable from PATH.
+    Invoke-NativeQuiet { python -m pip install pipx *>$null }
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [pipx] pip install failed (exit $LASTEXITCODE)" 'Yellow'
         return $false
@@ -2661,6 +2687,7 @@ function Initialize-Environment {
     $script:UserProfileRoot = $env:USERPROFILE
     $script:AppDataLocal    = Join-Path $script:UserProfileRoot 'AppData\Local'
     $script:GoUserRoot      = Join-Path $script:UserProfileRoot 'go'
+    $script:pipxtools = Join-Path $script:UserProfileRoot '.local'
     $script:DlRoot         = Join-Path $script:ToolsRoot 'downloads'
     $script:BofRoot        = Join-Path $script:ToolsRoot 'BOF'
     $script:SharpToolsRoot = Join-Path $script:ToolsRoot 'SharpTools'
@@ -2677,7 +2704,8 @@ function Initialize-Environment {
 
     $allDirs = @(
         $script:ToolsRoot, $script:PayloadRoot, $script:DlRoot, $script:LogRoot,
-        $script:BofRoot, $script:SharpToolsRoot, $script:CloudRoot, $script:PotatoRoot, $script:NimModsRoot
+        $script:BofRoot, $script:SharpToolsRoot, $script:CloudRoot, $script:PotatoRoot, $script:NimModsRoot,
+        $script:pipxtools, $script:AppDataLocal, $script:GoUserRoot, $script:NightmareEclipse
     )
     foreach ($dir in $allDirs) {
         if (!(Test-Path $dir)) {
