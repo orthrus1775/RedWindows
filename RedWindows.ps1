@@ -1672,6 +1672,15 @@ function Install-FromSourceBofMake {
         [string]$Cc64 = 'x86_64-w64-mingw32-gcc',
         [string]$Strip64 = 'strip',
 
+        # i686-w64-mingw32-gcc is what mingw-w64-i686-toolchain installs under
+        # C:\msys64\mingw32\bin - the x86 half of BOF Makefiles that build both
+        # architectures (CC_x86/STRIP_x86) needs this the same way the x64 half needs
+        # Cc64/Strip64 above. strip.exe is unprefixed here too, but it shares its name
+        # with mingw64\bin's strip.exe, which comes first on PATH - so this needs the
+        # full path rather than a bare name that would silently resolve to the wrong one.
+        [string]$Cc32 = 'i686-w64-mingw32-gcc',
+        [string]$Strip32 = 'C:\msys64\mingw32\bin\strip.exe',
+
         # Older BOF source routinely trips checks GCC 14+ promotes from warning to hard
         # error by default in C mode (e.g. passing a SIZE_T* where beacon.h declares int*) -
         # demote those back to warnings so pre-GCC14-era repos still build.
@@ -1736,10 +1745,11 @@ function Install-FromSourceBofMake {
         return $false
     }
 
-    $ccOverride = "$Cc64 $($ExtraCFlags -join ' ')"
+    $ccOverride64 = "$Cc64 $($ExtraCFlags -join ' ')"
+    $ccOverride32 = "$Cc32 $($ExtraCFlags -join ' ')"
     $makeArgs = @()
     if ($MakeTarget) { $makeArgs += $MakeTarget }
-    $makeArgs += "CC=$ccOverride", "CC_x64=$ccOverride", "STRIP=$Strip64", "STRIP_x64=$Strip64"
+    $makeArgs += "CC=$ccOverride64", "CC_x64=$ccOverride64", "CC_x86=$ccOverride32", "STRIP=$Strip64", "STRIP_x64=$Strip64", "STRIP_x86=$Strip32"
 
     if ($Recursive) {
         $makefiles = Get-ChildItem -Path $searchRoot -Recurse -Include 'Makefile', 'makefile', 'GNUmakefile' -File -ErrorAction SilentlyContinue
@@ -2025,8 +2035,9 @@ function Install-MsysToolchain {
         return $false
     }
 
-    $mingwGcc = 'C:\msys64\mingw64\bin\gcc.exe'
-    if (Test-Path $mingwGcc) {
+    $mingw64Gcc = 'C:\msys64\mingw64\bin\gcc.exe'
+    $mingw32Gcc = 'C:\msys64\mingw32\bin\gcc.exe'
+    if ((Test-Path $mingw64Gcc) -and (Test-Path $mingw32Gcc)) {
         Write-Status "[+] [MSYS2 toolchain] already installed" 'DarkGray'
         Add-Result -Name 'MSYS2 toolchain' -Status Installed -Detail 'already present'
         return $true
@@ -2037,29 +2048,35 @@ function Install-MsysToolchain {
     Write-Status "[-] [MSYS2 toolchain] pacman -Syu (core update pass 2/2)" 'Cyan'
     C:\msys64\usr\bin\bash.exe -lc 'pacman -Syu --noconfirm --needed' | Out-Null
 
-    Write-Status "[-] [MSYS2 toolchain] installing base-devel, mingw-w64 gcc/cmake/qt6" 'Cyan'
-    C:\msys64\usr\bin\bash.exe -lc 'pacman -S --noconfirm --needed base-devel mingw-w64-x86_64-toolchain mingw-w64-x86_64-cmake mingw-w64-x86_64-qt6' | Out-Null
+    # BOF Makefiles (e.g. C2-Tool-Collection) build both x64 and x86 objects per source
+    # file, so both mingw-w64 toolchains are required - x86_64-only left i686-w64-mingw32-gcc
+    # unresolved and broke the x86 half of every such build.
+    Write-Status "[-] [MSYS2 toolchain] installing base-devel, mingw-w64 x86_64/i686 gcc/cmake/qt6" 'Cyan'
+    C:\msys64\usr\bin\bash.exe -lc 'pacman -S --noconfirm --needed base-devel mingw-w64-x86_64-toolchain mingw-w64-i686-toolchain mingw-w64-x86_64-cmake mingw-w64-x86_64-qt6' | Out-Null
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [MSYS2 toolchain] pacman install failed (exit $LASTEXITCODE)" 'Yellow'
         return $false
     }
 
-    if (-not (Test-Path $mingwGcc)) {
-        Write-Status "[!] [MSYS2 toolchain] pacman succeeded but gcc.exe not found at $mingwGcc" 'Yellow'
+    if (-not (Test-Path $mingw64Gcc) -or -not (Test-Path $mingw32Gcc)) {
+        Write-Status "[!] [MSYS2 toolchain] pacman succeeded but gcc.exe not found at $mingw64Gcc or $mingw32Gcc" 'Yellow'
         return $false
     }
 
-    $mingwBin = 'C:\msys64\mingw64\bin'
+    $mingwBins = @('C:\msys64\mingw64\bin', 'C:\msys64\mingw32\bin')
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     $pathEntries = if ($userPath) { $userPath -split ';' } else { @() }
-    if ($pathEntries -notcontains $mingwBin) {
-        $newPath = if ($userPath) { "$userPath;$mingwBin" } else { $mingwBin }
-        [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
-        $env:Path += ";$mingwBin"
+    foreach ($mingwBin in $mingwBins) {
+        if ($pathEntries -notcontains $mingwBin) {
+            $userPath = if ($userPath) { "$userPath;$mingwBin" } else { $mingwBin }
+            $pathEntries += $mingwBin
+            $env:Path += ";$mingwBin"
+        }
     }
+    [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
 
-    Write-Status "[+] [MSYS2 toolchain] installed, $mingwBin added to user PATH" 'Green'
-    Add-Result -Name 'MSYS2 toolchain' -Status Installed -Detail 'base-devel + mingw-w64-x86_64-toolchain/cmake/qt6'
+    Write-Status "[+] [MSYS2 toolchain] installed, mingw64/mingw32 bin added to user PATH" 'Green'
+    Add-Result -Name 'MSYS2 toolchain' -Status Installed -Detail 'base-devel + mingw-w64-x86_64/i686-toolchain, x86_64-cmake/qt6'
     return $true
 }
 
@@ -2187,7 +2204,7 @@ function Install-VS2022Components {
 }
 
 function Install-Jdk17 {
-    $jdkUrl  = 'https://download.java.net/java/GA/jdk17.0.2/dfd4a8d0985749f896bed50d7138ee7f/8/GPL/openjdk-17.0.2_windows-x64_bin.zip'
+    $jdkUrl  = 'https://download.java.net/java/GA/jdk17.0.1/2a2082e5a09d4267845be086888add4f/12/GPL/openjdk-17.0.1_windows-x64_bin.zip'
     $jdkHome = 'C:\Program Files\jdk-17.0.2'
     $jdkBin  = Join-Path $jdkHome 'bin'
 
@@ -2452,8 +2469,8 @@ function Get-PackageTable {
         # --- Core utilities ---
         @{ Name = 'Sysinternals Suite'; Tiers = @({ Install-WingetPackage 'Sysinternals Suite' '9P7KNL5RWT25' }) }
         @{ Name = '7-Zip';              Tiers = @({ Install-WingetPackage '7-Zip' '7zip.7zip' }) }
-        @{ Name = 'Python 3.13';        Tiers = @({ Install-WingetPackage 'Python 3.13' 'Python.Python.3.13' }) }
-        @{ Name = 'Go';                 Tiers = @({ Install-WingetPackage 'Go' 'GoLang.Go' }) }
+        #@{ Name = 'Python 3.13';        Tiers = @({ Install-WingetPackage 'Python 3.13' 'Python.Python.3.13' }) }
+        #@{ Name = 'Go';                 Tiers = @({ Install-WingetPackage 'Go' 'GoLang.Go' }) }
         @{ Name = 'Gitleaks';           Tiers = @({ Install-WingetPackage 'Gitleaks' 'Gitleaks.Gitleaks' }) }
         @{ Name = 'vscode';            Tiers = @({ Install-WingetPackage 'vscode' 'Microsoft.VisualStudioCode' }) }
         @{ Name = 'Windows Terminal';   Tiers = @({ Install-WingetPackage 'Windows Terminal' 'Microsoft.WindowsTerminal' }) }
@@ -2477,7 +2494,7 @@ function Get-PackageTable {
         # --- Password / hash cracking ---
         @{ Name = 'Hashcat';   Tiers = @({ Install-GitHubReleaseAsset -Name 'Hashcat' -Repo 'hashcat/hashcat' -AssetPattern '*.7z' -Extract7z }) }
 
-        @{ Name = 'SharpHound'; Tiers = @({ Install-GitHubReleaseAsset -Name 'SharpHound' -Repo 'SpecterOps/SharpHound' -AssetPattern '*.zip' -ExtractZip }) }
+        @{ Name = 'SharpHound'; Tiers = @({ Install-GitHubReleaseAsset -Name 'SharpHound' -Repo 'SpecterOps/SharpHound' -DestRoot $script:SharpToolsRoot -AssetPattern '*.zip' -ExtractZip }) }
         @{ Name = 'Rubeus';     Tiers = @({ Install-FromSourceDotNet -Name 'Rubeus' -Repo 'GhostPack/Rubeus' -DestRoot $script:SharpToolsRoot }) }
 
         @{ Name = 'Certify';    Tiers = @({ Install-FromSourceDotNet -Name 'Certify' -Repo 'GhostPack/Certify' -DestRoot $script:SharpToolsRoot -Ref 'bee728d' }) }
@@ -2504,7 +2521,7 @@ function Get-PackageTable {
         @{ Name = 'CredManBOF';                      Tiers = @({ Install-GitCloneOnly -Name 'CredManBOF' -Repo 'jsecu/CredManBOF' -DestRoot $script:BofRoot }) }
         @{ Name = 'CS-Remote-OPs-BOF';               Tiers = @({ Install-GitCloneOnly -Name 'CS-Remote-OPs-BOF' -Repo 'trustedsec/CS-Remote-OPs-BOF' -DestRoot $script:BofRoot }) }
         @{ Name = 'CS-Situational-Awareness-BOF';    Tiers = @({ Install-GitCloneOnly -Name 'CS-Situational-Awareness-BOF' -Repo 'trustedsec/CS-Situational-Awareness-BOF' -DestRoot $script:BofRoot -MakeDir 'src\SA' -Recursive }) }
-        @{ Name = 'DelegationBOF';                   Tiers = @({ Install-FromSourceBofMake -Name 'DelegationBOF' -Repo 'Crypt0s/DelegationBOF' -DestRoot $script:BofRoot }) }
+        @{ Name = 'DelegationBOF';                   Tiers = @({ Install-FromSourceBofMake -Name 'DelegationBOF' -Repo 'orthrus1775/DelegationBOF' -DestRoot $script:BofRoot }) }
         @{ Name = 'HandleKatz_BOF';                  Tiers = @({ Install-FromSourceBofMake -Name 'HandleKatz_BOF' -Repo 'EspressoCake/HandleKatz_BOF' -DestRoot $script:BofRoot -MakeDir 'src' }) }
         @{ Name = 'HOLLOW';                          Tiers = @({ Install-GitCloneOnly -Name 'HOLLOW' -Repo 'boku7/HOLLOW' -DestRoot $script:BofRoot }) }
         @{ Name = 'injectAmsiBypass';                Tiers = @({ Install-GitCloneOnly -Name 'injectAmsiBypass' -Repo 'boku7/injectAmsiBypass' -DestRoot $script:BofRoot }) }
@@ -2811,16 +2828,20 @@ function Install-AllPackages {
         $name = $pkg.Name
         $done = $false
 
-        foreach ($tier in $pkg.Tiers) {
-            try {
-                if (& $tier) { $done = $true; break }
-            } catch {
-                Write-Status "[!] [$name] tier threw: $($_.Exception.Message)" 'Yellow'
+        for ($attempt = 1; $attempt -le 3 -and -not $done; $attempt++) {
+            foreach ($tier in $pkg.Tiers) {
+                try {
+                    if (& $tier) { $done = $true; break }
+                } catch {}
+            }
+
+            if (-not $done -and $attempt -lt 3) {
+                Write-Status "[!] [$name] attempt $attempt/3 failed - retrying" 'Yellow'
             }
         }
 
         if (-not $done) {
-            Write-Status "[x] [$name] all install tiers failed - skipping" 'Red'
+            Write-Status "[x] [$name] all install tiers failed after 3 attempts - skipping" 'Red'
             Add-Result -Name $name -Status Skipped -Detail 'Failed'
         }
         Wait-ForStageBreakpoint -Message "[$name] done (success=$done) - press Enter for next package..."
