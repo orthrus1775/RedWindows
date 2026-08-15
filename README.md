@@ -2,6 +2,12 @@
 Customized Windows 10 for Red Teams.
 
 > Currently a hot mess and will clean it up later, but it works!
+## To run
+```powershell
+iwr "https://raw.githubusercontent.com/orthrus1775/RedWindows/refs/heads/main/RedWindows.ps1" -OutFile "$env:USERPROFILE\Desktop\RedWindows.ps1"; & "$env:USERPROFILE\Desktop\RedWindows.ps1"
+
+```
+
 
 ## Building a base VM with Packer
 

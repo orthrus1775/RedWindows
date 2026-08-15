@@ -2450,12 +2450,12 @@ function Get-PackageTable {
         @{ Name = 'MobaXterm';          Tiers = @({ Install-WingetPackage 'MobaXterm' 'Mobatek.MobaXterm' }) }
 
         # --- Core utilities ---
-        @{ Name = 'Sysinternals Suite'; Tiers = @({ Install-WingetPackage 'Sysinternals Suite' 'Microsoft.Sysinternals.Suite' }) }
+        @{ Name = 'Sysinternals Suite'; Tiers = @({ Install-WingetPackage 'Sysinternals Suite' '9P7KNL5RWT25' }) }
         @{ Name = '7-Zip';              Tiers = @({ Install-WingetPackage '7-Zip' '7zip.7zip' }) }
         @{ Name = 'Python 3.13';        Tiers = @({ Install-WingetPackage 'Python 3.13' 'Python.Python.3.13' }) }
         @{ Name = 'Go';                 Tiers = @({ Install-WingetPackage 'Go' 'GoLang.Go' }) }
         @{ Name = 'Gitleaks';           Tiers = @({ Install-WingetPackage 'Gitleaks' 'Gitleaks.Gitleaks' }) }
-        @{ Name = 'VS Code';            Tiers = @({ Install-WingetPackage 'VS Code' 'Microsoft.VisualStudioCode' }) }
+        @{ Name = 'vscode';            Tiers = @({ Install-WingetPackage 'vscode' 'Microsoft.VisualStudioCode' }) }
         @{ Name = 'Windows Terminal';   Tiers = @({ Install-WingetPackage 'Windows Terminal' 'Microsoft.WindowsTerminal' }) }
         @{ Name = 'Notepad++';          Tiers = @({ Install-WingetPackage 'Notepad++' 'Notepad++.Notepad++' }) }
         @{ Name = 'DB Browser SQLite';  Tiers = @({ Install-WingetPackage 'DB Browser SQLite' 'DBBrowserForSQLite.DBBrowserForSQLite' }) }
@@ -2823,6 +2823,7 @@ function Install-AllPackages {
             Write-Status "[x] [$name] all install tiers failed - skipping" 'Red'
             Add-Result -Name $name -Status Skipped -Detail 'Failed'
         }
+        Wait-ForStageBreakpoint -Message "[$name] done (success=$done) - press Enter for next package..."
     }
 }
 
