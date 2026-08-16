@@ -51,7 +51,7 @@ variable "memory" {
 
 variable "disk_size" {
   type    = number
-  default = 131072 # MB, 128GB
+  default = 153600 # MB, 150GB
 }
 
 variable "headless" {

@@ -607,10 +607,11 @@ function Clear-EventLogs {
         $cleared = 0
         $failed = 0
         foreach ($log in $logs) {
-            # Some logs (e.g. disabled channels, ones with retention locks) refuse to clear -
-            # wevtutil is a native exe so that's a non-zero exit, not a terminating exception,
-            # and it's expected often enough that it shouldn't fail the whole stage.
-            wevtutil.exe cl "$($log.LogName)" 2>$null
+            # Some logs (e.g. disabled channels, ones with retention locks) refuse to clear.
+            # With $ErrorActionPreference = 'Stop' set globally, wevtutil's stderr for those
+            # becomes a terminating error even through 2>$null - Invoke-NativeQuiet relaxes
+            # that for the call so a single uncooperative log doesn't abort the whole loop.
+            Invoke-NativeQuiet { wevtutil.exe cl "$($log.LogName)" *>$null }
             if ($LASTEXITCODE -eq 0) { $cleared++ } else { $failed++ }
         }
 
@@ -639,10 +640,16 @@ function Optimize-VmDisk {
             return $false
         }
 
-        & $vmwareToolboxCmd disk shrink C:\
+        # Capture output (incl. stderr) rather than letting it stream straight to the
+        # transcript - under the global $ErrorActionPreference = 'Stop', stderr text would
+        # otherwise throw before $LASTEXITCODE is even checked, and without capturing it
+        # the actual reason for a failure (e.g. shrink disabled in the vmx) only lives in
+        # the transcript instead of the results log.
+        $output = (Invoke-NativeQuiet { & $vmwareToolboxCmd disk shrink C:\ 2>&1 } | Out-String).Trim()
+        if ($output) { Write-Status $output 'DarkGray' }
         if ($LASTEXITCODE -ne 0) {
             Write-Status "[!] [Disk shrink] exited with code $LASTEXITCODE" 'Yellow'
-            Add-Result -Name 'Disk shrink' -Status Skipped -Detail "exit $LASTEXITCODE"
+            Add-Result -Name 'Disk shrink' -Status Skipped -Detail "exit ${LASTEXITCODE}: $($output -replace '\s+', ' ')"
             return $false
         }
 
@@ -710,8 +717,12 @@ function Install-WingetPackage {
         return $true
     }
 
-    # winget install --id $pkg.Id --source $pkg.Source --exact --silent --accept-source-agreements --accept-package-agreements --disable-interactivity | Out-Null
-    winget install --id $Id -e --accept-source-agreements --accept-package-agreements
+    # Piped to Out-Host rather than left bare - winget's install output is otherwise
+    # unsuppressed stdout, which becomes part of THIS function's own return value. A
+    # multi-element array is always truthy in PowerShell regardless of its contents, so
+    # Install-AllPackages's `if (& $tier)` would then see [<winget output>, $false] and
+    # read it as success even when the install actually failed below.
+    winget install --id $Id -e --accept-source-agreements --accept-package-agreements | Out-Host
     if ($LASTEXITCODE -eq 0) {
         Write-Status "[+] [$Name] installed via winget" 'Green'
         Add-Result -Name $Name -Status Installed -Detail "winget:$Id"
@@ -1179,17 +1190,28 @@ function Invoke-GitCloneOrUpdate {
             if ($existed) {
                 if ($Ref) {
                     Write-Status "[-] [$Name] git fetch" 'Cyan'
-                    git -C $CloneDir fetch
+                    Invoke-NativeQuiet { git -C $CloneDir fetch *>$null }
                 } else {
                     Write-Status "[-] [$Name] git pull" 'Cyan'
-                    git -C $CloneDir pull
+                    Invoke-NativeQuiet { git -C $CloneDir pull *>$null }
                 }
             } else {
                 Write-Status "[-] [$Name] git clone $Repo -> $CloneDir" 'Cyan'
-                git clone (Resolve-GitCloneUrl -Repo $Repo) $CloneDir
+                Invoke-NativeQuiet { git clone (Resolve-GitCloneUrl -Repo $Repo) $CloneDir *>$null }
             }
-            if ($LASTEXITCODE -eq 0) { return $true }
-            Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
+
+            if ($LASTEXITCODE -ne 0) {
+                Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
+            } elseif ($Ref) {
+                Write-Status "[-] [$Name] checking out pinned ref $Ref" 'Cyan'
+                Invoke-NativeQuiet { git -C $CloneDir checkout $Ref *>$null }
+                if ($LASTEXITCODE -eq 0) {
+                    return $true
+                }
+                Write-Status "[!] [$Name] failed to checkout pinned ref '$Ref' (exit $LASTEXITCODE)" 'Yellow'
+            } else {
+                return $true
+            }
         } catch {
             Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
         }
@@ -1217,7 +1239,7 @@ function Update-GitSubmodules {
     )
 
     Write-Status "[-] [$Name] git submodule update --init --recursive" 'Cyan'
-    git -C $CloneDir submodule update --init --recursive
+    Invoke-NativeQuiet { git -C $CloneDir submodule update --init --recursive *>$null }
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [$Name] git submodule update failed (exit $LASTEXITCODE)" 'Yellow'
         return $false
@@ -1239,15 +1261,6 @@ function Install-FromSourceDotNet {
     $cloneDir = Join-Path $DestRoot $Name
     if (-not (Invoke-GitCloneOrUpdate -Name $Name -Repo $Repo -CloneDir $cloneDir -Ref $Ref)) {
         return $false
-    }
-
-    if ($Ref) {
-        Write-Status "[-] [$Name] checking out pinned ref $Ref" 'Cyan'
-        git -C $cloneDir checkout $Ref
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [$Name] failed to checkout pinned ref '$Ref' (exit $LASTEXITCODE)" 'Yellow'
-            return $false
-        }
     }
     if ($SubModule -and -not (Update-GitSubmodules -Name $Name -CloneDir $cloneDir)) {
         return $false
@@ -1587,15 +1600,6 @@ function Install-FromSourceCMake {
     if (-not (Invoke-GitCloneOrUpdate -Name $Name -Repo $Repo -CloneDir $cloneDir -Ref $Ref)) {
         return $false
     }
-
-    if ($Ref) {
-        Write-Status "[-] [$Name] checking out pinned ref $Ref" 'Cyan'
-        git -C $cloneDir checkout $Ref
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [$Name] failed to checkout pinned ref '$Ref' (exit $LASTEXITCODE)" 'Yellow'
-            return $false
-        }
-    }
     if ($SubModule -and -not (Update-GitSubmodules -Name $Name -CloneDir $cloneDir)) {
         return $false
     }
@@ -1658,15 +1662,6 @@ function Install-FromSourceBof {
     $cloneDir = Join-Path $DestRoot $Name
     if (-not (Invoke-GitCloneOrUpdate -Name $Name -Repo $Repo -CloneDir $cloneDir -Ref $Ref)) {
         return $false
-    }
-
-    if ($Ref) {
-        Write-Status "[-] [$Name] checking out pinned ref $Ref" 'Cyan'
-        git -C $cloneDir checkout $Ref
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [$Name] failed to checkout pinned ref '$Ref' (exit $LASTEXITCODE)" 'Yellow'
-            return $false
-        }
     }
     if ($SubModule -and -not (Update-GitSubmodules -Name $Name -CloneDir $cloneDir)) {
         return $false
@@ -1746,15 +1741,6 @@ function Install-FromSourceBofMake {
     $cloneDir = Join-Path $DestRoot $Name
     if (-not (Invoke-GitCloneOrUpdate -Name $Name -Repo $Repo -CloneDir $cloneDir -Ref $Ref)) {
         return $false
-    }
-
-    if ($Ref) {
-        Write-Status "[-] [$Name] checking out pinned ref $Ref" 'Cyan'
-        git -C $cloneDir checkout $Ref
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [$Name] failed to checkout pinned ref '$Ref' (exit $LASTEXITCODE)" 'Yellow'
-            return $false
-        }
     }
     if ($SubModule -and -not (Update-GitSubmodules -Name $Name -CloneDir $cloneDir)) {
         return $false
@@ -1861,15 +1847,6 @@ function Install-FromSourceNative {
     $cloneDir = Join-Path $DestRoot $Name
     if (-not (Invoke-GitCloneOrUpdate -Name $Name -Repo $Repo -CloneDir $cloneDir -Ref $Ref)) {
         return $false
-    }
-
-    if ($Ref) {
-        Write-Status "[-] [$Name] checking out pinned ref $Ref" 'Cyan'
-        git -C $cloneDir checkout $Ref
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [$Name] failed to checkout pinned ref '$Ref' (exit $LASTEXITCODE)" 'Yellow'
-            return $false
-        }
     }
     if ($SubModule -and -not (Update-GitSubmodules -Name $Name -CloneDir $cloneDir)) {
         return $false

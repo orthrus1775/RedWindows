@@ -55,7 +55,7 @@ The unattended install creates a local admin account (`attacker` /
 stay in sync since the answer file isn't templated by Packer) and enables
 WinRM so Packer can connect and finish provisioning.
 
-Defaults: 2 CPUs, 16GB RAM, 128GB disk, VMware window visible
+Defaults: 2 CPUs, 16GB RAM, 150GB disk, VMware window visible
 (`headless = false`). Override any of these with `-var` or in your
 var-file, e.g. `-var cpus=4 -var headless=true`.
 
