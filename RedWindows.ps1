@@ -1640,7 +1640,7 @@ function Install-FromSourceBof {
     $buildScriptLeaf = Split-Path $buildScriptPath -Leaf
 
     Write-Status "[-] [$Name] running $BuildScript in a VS Developer shell ($Arch)" 'Cyan'
-    if (-not (Invoke-InVsDevShell -WorkingDirectory $buildScriptDir -Command "`"$buildScriptLeaf`"" -Arch $Arch)) {
+    if (-not (Invoke-InVsDevShell -WorkingDirectory $buildScriptDir -Command "$buildScriptLeaf" -Arch $Arch)) {
         Write-Status "[!] [$Name] $BuildScript failed (exit $LASTEXITCODE)" 'Yellow'
         return $false
     }
@@ -2063,7 +2063,7 @@ function Install-MsysToolchain {
         return $false
     }
 
-    $mingwBins = @('C:\msys64\mingw64\bin', 'C:\msys64\mingw32\bin')
+    $mingwBins = @('C:\msys64\mingw64\bin', 'C:\msys64\mingw32\bin', 'C:\msys64\usr\bin')
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     $pathEntries = if ($userPath) { $userPath -split ';' } else { @() }
     foreach ($mingwBin in $mingwBins) {
@@ -2075,7 +2075,7 @@ function Install-MsysToolchain {
     }
     [Environment]::SetEnvironmentVariable('Path', $userPath, 'User')
 
-    Write-Status "[+] [MSYS2 toolchain] installed, mingw64/mingw32 bin added to user PATH" 'Green'
+    Write-Status "[+] [MSYS2 toolchain] installed, mingw64/mingw32/usr bin added to user PATH" 'Green'
     Add-Result -Name 'MSYS2 toolchain' -Status Installed -Detail 'base-devel + mingw-w64-x86_64/i686-toolchain, x86_64-cmake/qt6'
     return $true
 }
@@ -2526,8 +2526,8 @@ function Get-PackageTable {
         @{ Name = 'HOLLOW';                          Tiers = @({ Install-GitCloneOnly -Name 'HOLLOW' -Repo 'boku7/HOLLOW' -DestRoot $script:BofRoot }) }
         @{ Name = 'injectAmsiBypass';                Tiers = @({ Install-GitCloneOnly -Name 'injectAmsiBypass' -Repo 'boku7/injectAmsiBypass' -DestRoot $script:BofRoot }) }
         @{ Name = 'injectEtwBypass';                 Tiers = @({ Install-GitCloneOnly -Name 'injectEtwBypass' -Repo 'boku7/injectEtwBypass' -DestRoot $script:BofRoot }) }
-        @{ Name = 'Kerbeus-BOF';                     Tiers = @({ Install-FromSourceBofMake -Name 'Kerbeus-BOF' -Repo 'RalfHacker/Kerbeus-BOF' -DestRoot $script:BofRoot }) }
-        @{ Name = 'nanorobeus';                      Tiers = @({ Install-FromSourceBofMake -Name 'nanorobeus' -Repo 'wavvs/nanorobeus' -DestRoot $script:BofRoot }) }
+        @{ Name = 'Kerbeus-BOF';                     Tiers = @({ Install-FromSourceBofMake -Name 'Kerbeus-BOF' -Repo 'orthrus1775/Kerbeus-BOF.git' -DestRoot $script:BofRoot }) }
+        @{ Name = 'nanorobeus';                      Tiers = @({ Install-FromSourceBofMake -Name 'nanorobeus' -Repo 'orthrus1775/nanorobeus' -DestRoot $script:BofRoot }) }
         @{ Name = 'No-Consolation';                  Tiers = @({ Install-FromSourceBofMake -Name 'No-Consolation' -Repo 'fortra/No-Consolation' -DestRoot $script:BofRoot }) }
         @{ Name = 'OperatorsKit';                    Tiers = @({ Install-FromSourceBof -Name 'OperatorsKit' -Repo 'REDMED-X/OperatorsKit' -DestRoot $script:BofRoot -BuildScript 'compile-all.bat' }) }
         @{ Name = 'PatchlessInlineExecute-Assembly'; Tiers = @({ Install-FromSourceBof -Name 'PatchlessInlineExecute-Assembly' -Repo 'VoldeSec/PatchlessInlineExecute-Assembly' -DestRoot $script:BofRoot -BuildScript 'src\compile.bat' }) }
