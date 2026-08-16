@@ -171,6 +171,18 @@ function Disable-ScreenSaver {
     }
 }
 
+function Show-FileExtensions {
+    Write-Status "[-] [File extensions] enabling" 'Cyan'
+    try {
+        Set-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name HideFileExt -Value 0 -Type DWord
+        Write-Status "[+] [File extensions] enabled" 'Green'
+        Add-Result -Name 'File extensions' -Status Installed -Detail 'HideFileExt=0'
+    } catch {
+        Write-Status "[!] [File extensions] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'File extensions' -Status Skipped -Detail $_.Exception.Message
+    }
+}
+
 function Set-QuickAccess {
     param(
         [string]$Path = $script:ToolsRoot
@@ -588,15 +600,71 @@ function Wait-ForStageBreakpoint {
     }
 }
 
+function Clear-EventLogs {
+    Write-Status "[-] [Event logs] clearing" 'Cyan'
+    try {
+        $logs = Get-WinEvent -ListLog * -Force -ErrorAction SilentlyContinue
+        $cleared = 0
+        $failed = 0
+        foreach ($log in $logs) {
+            # Some logs (e.g. disabled channels, ones with retention locks) refuse to clear -
+            # wevtutil is a native exe so that's a non-zero exit, not a terminating exception,
+            # and it's expected often enough that it shouldn't fail the whole stage.
+            wevtutil.exe cl "$($log.LogName)" 2>$null
+            if ($LASTEXITCODE -eq 0) { $cleared++ } else { $failed++ }
+        }
+
+        $historyPath = (Get-PSReadLineOption).HistorySavePath
+        if ($historyPath -and (Test-Path $historyPath)) {
+            Remove-Item -Path $historyPath -Force -ErrorAction SilentlyContinue
+        }
+        Clear-History -ErrorAction SilentlyContinue
+
+        Write-Status "[+] [Event logs] cleared $cleared/$($logs.Count) logs ($failed could not be cleared), PowerShell history removed" 'Green'
+        Add-Result -Name 'Event logs' -Status Installed -Detail "cleared $cleared/$($logs.Count)"
+    } catch {
+        Write-Status "[!] [Event logs] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Event logs' -Status Skipped -Detail $_.Exception.Message
+    }
+}
+
+function Optimize-VmDisk {
+    $vmwareToolboxCmd = 'C:\Program Files\VMware\VMware Tools\VMwareToolboxCmd.exe'
+
+    Write-Status "[-] [Disk shrink] running VMwareToolboxCmd disk shrink C:\" 'Cyan'
+    try {
+        if (-not (Test-Path $vmwareToolboxCmd)) {
+            Write-Status "[!] [Disk shrink] $vmwareToolboxCmd not found - is VMware Tools installed?" 'Yellow'
+            Add-Result -Name 'Disk shrink' -Status Skipped -Detail "$vmwareToolboxCmd not found"
+            return $false
+        }
+
+        & $vmwareToolboxCmd disk shrink C:\
+        if ($LASTEXITCODE -ne 0) {
+            Write-Status "[!] [Disk shrink] exited with code $LASTEXITCODE" 'Yellow'
+            Add-Result -Name 'Disk shrink' -Status Skipped -Detail "exit $LASTEXITCODE"
+            return $false
+        }
+
+        Write-Status "[+] [Disk shrink] completed" 'Green'
+        Add-Result -Name 'Disk shrink' -Status Installed -Detail 'VMwareToolboxCmd disk shrink C:\'
+        return $true
+    } catch {
+        Write-Status "[!] [Disk shrink] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Disk shrink' -Status Skipped -Detail $_.Exception.Message
+        return $false
+    }
+}
+
 function Complete-Installation {
     Unregister-ContinuationTask
     Disable-AutoLogin
     Remove-LocalSupportUser
     Show-Summary
     Start-Sleep -Seconds 300
-    Write-Status "`n=== Stage complete - restarting to continue as stage $NextStage ===" 'Magenta'
+    Write-Status "`n=== Installation complete - final restart ===" 'Magenta'
     Wait-ForStageBreakpoint
-    Start-Sleep -Seconds 30
+    Start-Sleep -Seconds 300
     Restart-Computer -Force
 }
 
@@ -1087,6 +1155,61 @@ function Resolve-GitCloneUrl {
     return "https://github.com/$Repo.git"
 }
 
+function Invoke-GitCloneOrUpdate {
+    # Shared clone/fetch/pull step for the Install-FromSource*/Install-GitCloneOnly family.
+    # Retries transient failures (e.g. DNS blips) instead of leaving a half-cloned directory
+    # behind that a later "pull" silently fails against - and actually checks $LASTEXITCODE,
+    # since a failed git process doesn't throw so a bare try/catch here would swallow it.
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name,
+        [Parameter(Mandatory)]
+        [string]$Repo,
+        [Parameter(Mandatory)]
+        [string]$CloneDir,
+        [string]$Ref,
+        [int]$MaxAttempts = 3,
+        [int]$RetryDelaySeconds = 15
+    )
+
+    $existed = Test-Path $CloneDir
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            if ($existed) {
+                if ($Ref) {
+                    Write-Status "[-] [$Name] git fetch" 'Cyan'
+                    git -C $CloneDir fetch
+                } else {
+                    Write-Status "[-] [$Name] git pull" 'Cyan'
+                    git -C $CloneDir pull
+                }
+            } else {
+                Write-Status "[-] [$Name] git clone $Repo -> $CloneDir" 'Cyan'
+                git clone (Resolve-GitCloneUrl -Repo $Repo) $CloneDir
+            }
+            if ($LASTEXITCODE -eq 0) { return $true }
+            Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
+        } catch {
+            Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+        }
+
+        # A failed first-time clone can still leave a partial directory behind, which would
+        # make the next attempt take the "pull" branch above against a non-repo folder.
+        if (-not $existed -and (Test-Path $CloneDir)) {
+            Remove-Item -Path $CloneDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+
+        if ($attempt -lt $MaxAttempts) {
+            Write-Status "[!] [$Name] clone attempt $attempt/$MaxAttempts failed - retrying in ${RetryDelaySeconds}s" 'Yellow'
+            Start-Sleep -Seconds $RetryDelaySeconds
+        }
+    }
+
+    Write-Status "[x] [$Name] git clone/update failed after $MaxAttempts attempts" 'Red'
+    return $false
+}
+
 function Update-GitSubmodules {
     param(
         [string]$Name,
@@ -1114,25 +1237,7 @@ function Install-FromSourceDotNet {
     )
 
     $cloneDir = Join-Path $DestRoot $Name
-    Write-Status "[-] [$Name] git clone $Repo -> $cloneDir" 'Cyan'
-    try {
-        if (Test-Path $cloneDir) {
-            if ($Ref) {
-                Write-Status "[-] [$Name] git fetch" 'Cyan'
-                git -C $cloneDir fetch
-            } else {
-                Write-Status "[-] [$Name] git pull" 'Cyan'
-                git -C $cloneDir pull
-            }
-        } else {
-            git clone (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
-        }
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
-            return $false
-        }
-    } catch {
-        Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+    if (-not (Invoke-GitCloneOrUpdate -Name $Name -Repo $Repo -CloneDir $cloneDir -Ref $Ref)) {
         return $false
     }
 
@@ -1253,15 +1358,7 @@ function Install-GitCloneOnly {
     )
 
     $cloneDir = Join-Path $DestRoot $Name
-    Write-Status "[-] [$Name] git clone $Repo (script tool, no build needed)" 'Cyan'
-    try {
-        if (Test-Path $cloneDir) {
-            git -C $cloneDir pull --quiet
-        } else {
-            git clone --quiet (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
-        }
-    } catch {
-        Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+    if (-not (Invoke-GitCloneOrUpdate -Name $Name -Repo $Repo -CloneDir $cloneDir)) {
         return $false
     }
 
@@ -1332,15 +1429,7 @@ function Install-FromSourceGo {
     )
 
     $cloneDir = Join-Path $DestRoot $Name
-    Write-Status "[-] [$Name] git clone $Repo" 'Cyan'
-    try {
-        if (Test-Path $cloneDir) {
-            git -C $cloneDir pull --quiet
-        } else {
-            git clone --quiet (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
-        }
-    } catch {
-        Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+    if (-not (Invoke-GitCloneOrUpdate -Name $Name -Repo $Repo -CloneDir $cloneDir)) {
         return $false
     }
 
@@ -1423,15 +1512,7 @@ function Install-FromSourceRust {
     )
 
     $cloneDir = Join-Path $DestRoot $Name
-    Write-Status "[-] [$Name] git clone $Repo" 'Cyan'
-    try {
-        if (Test-Path $cloneDir) {
-            git -C $cloneDir pull --quiet
-        } else {
-            git clone --quiet (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
-        }
-    } catch {
-        Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+    if (-not (Invoke-GitCloneOrUpdate -Name $Name -Repo $Repo -CloneDir $cloneDir)) {
         return $false
     }
 
@@ -1503,25 +1584,7 @@ function Install-FromSourceCMake {
     )
 
     $cloneDir = Join-Path $DestRoot $Name
-    Write-Status "[-] [$Name] git clone $Repo -> $cloneDir" 'Cyan'
-    try {
-        if (Test-Path $cloneDir) {
-            if ($Ref) {
-                Write-Status "[-] [$Name] git fetch" 'Cyan'
-                git -C $cloneDir fetch
-            } else {
-                Write-Status "[-] [$Name] git pull" 'Cyan'
-                git -C $cloneDir pull
-            }
-        } else {
-            git clone (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
-        }
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
-            return $false
-        }
-    } catch {
-        Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+    if (-not (Invoke-GitCloneOrUpdate -Name $Name -Repo $Repo -CloneDir $cloneDir -Ref $Ref)) {
         return $false
     }
 
@@ -1593,25 +1656,7 @@ function Install-FromSourceBof {
     )
 
     $cloneDir = Join-Path $DestRoot $Name
-    Write-Status "[-] [$Name] git clone $Repo -> $cloneDir" 'Cyan'
-    try {
-        if (Test-Path $cloneDir) {
-            if ($Ref) {
-                Write-Status "[-] [$Name] git fetch" 'Cyan'
-                git -C $cloneDir fetch
-            } else {
-                Write-Status "[-] [$Name] git pull" 'Cyan'
-                git -C $cloneDir pull
-            }
-        } else {
-            git clone (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
-        }
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
-            return $false
-        }
-    } catch {
-        Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+    if (-not (Invoke-GitCloneOrUpdate -Name $Name -Repo $Repo -CloneDir $cloneDir -Ref $Ref)) {
         return $false
     }
 
@@ -1699,25 +1744,7 @@ function Install-FromSourceBofMake {
     )
 
     $cloneDir = Join-Path $DestRoot $Name
-    Write-Status "[-] [$Name] git clone $Repo -> $cloneDir" 'Cyan'
-    try {
-        if (Test-Path $cloneDir) {
-            if ($Ref) {
-                Write-Status "[-] [$Name] git fetch" 'Cyan'
-                git -C $cloneDir fetch
-            } else {
-                Write-Status "[-] [$Name] git pull" 'Cyan'
-                git -C $cloneDir pull
-            }
-        } else {
-            git clone (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
-        }
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
-            return $false
-        }
-    } catch {
-        Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+    if (-not (Invoke-GitCloneOrUpdate -Name $Name -Repo $Repo -CloneDir $cloneDir -Ref $Ref)) {
         return $false
     }
 
@@ -1832,25 +1859,7 @@ function Install-FromSourceNative {
     )
 
     $cloneDir = Join-Path $DestRoot $Name
-    Write-Status "[-] [$Name] git clone $Repo -> $cloneDir" 'Cyan'
-    try {
-        if (Test-Path $cloneDir) {
-            if ($Ref) {
-                Write-Status "[-] [$Name] git fetch" 'Cyan'
-                git -C $cloneDir fetch
-            } else {
-                Write-Status "[-] [$Name] git pull" 'Cyan'
-                git -C $cloneDir pull
-            }
-        } else {
-            git clone (Resolve-GitCloneUrl -Repo $Repo) $cloneDir
-        }
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [$Name] git clone/fetch/pull exited with code $LASTEXITCODE" 'Yellow'
-            return $false
-        }
-    } catch {
-        Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
+    if (-not (Invoke-GitCloneOrUpdate -Name $Name -Repo $Repo -CloneDir $cloneDir -Ref $Ref)) {
         return $false
     }
 
@@ -2435,7 +2444,15 @@ function Install-Client {
         $content = $content -replace '(?im)^\s*pause\s*$', '%WINDIR%\System32\timeout.exe /T 30 /NOBREAK'
         Set-Content -Path $batPath -Value $content -NoNewline
 
-        cmd.exe /c "`"$batPath`""
+        # build.bat doesn't cd to its own folder, so it inherits whatever CWD this was
+        # launched from (e.g. C:\Windows\system32 for the autologon scheduled task) and
+        # its relative cmake/dist paths resolve against the wrong directory.
+        Push-Location (Split-Path -Path $batPath -Parent)
+        try {
+            cmd.exe /c "`"$batPath`""
+        } finally {
+            Pop-Location
+        }
         if ($LASTEXITCODE -ne 0) {
             Write-Status "[!] [Client] $batPath exited with code $LASTEXITCODE" 'Yellow'
             Add-Result -Name 'Client' -Status Skipped -Detail "exit $LASTEXITCODE"
@@ -2514,7 +2531,7 @@ function Get-PackageTable {
         @{ Name = 'HiveSwarming';    Tiers = @({ Install-GitHubReleaseAsset -Name 'HiveSwarming' -Repo 'stormshield/HiveSwarming' -AssetPattern 'HiveSwarming.exe' -Tag 'v1.6' }) }
 
         # --- [BOF]-tagged tools from verify-packages.md -> C:\Tools\BOF ---
-        @{ Name = 'bof-collection';                 Tiers = @({ Install-FromSourceBofMake -Name 'bof-collection' -Repo 'rvrsh3ll/BOF_Collection' -DestRoot $script:BofRoot -Recursive }) }
+        @{ Name = 'bof-collection';                 Tiers = @({ Install-FromSourceBofMake -Name 'bof-collection' -Repo 'orthrus1775/BOF_Collection' -DestRoot $script:BofRoot -Recursive }) }
         @{ Name = 'BOF-patchit';                     Tiers = @({ Install-GitCloneOnly -Name 'BOF-patchit' -Repo 'ScriptIdiot/BOF-patchit' -DestRoot $script:BofRoot }) }
         @{ Name = 'BofRoast';                        Tiers = @({ Install-FromSourceBofMake -Name 'BofRoast' -Repo 'cube0x0/BofRoast' -DestRoot $script:BofRoot -MakeDir 'BofRoast' }) }
         @{ Name = 'C2-Tool-Collection';              Tiers = @({ Install-FromSourceBofMake -Name 'C2-Tool-Collection' -Repo 'outflanknl/C2-Tool-Collection' -DestRoot $script:BofRoot -MakeDir 'BOF' -Recursive }) }
@@ -2526,7 +2543,7 @@ function Get-PackageTable {
         @{ Name = 'HOLLOW';                          Tiers = @({ Install-GitCloneOnly -Name 'HOLLOW' -Repo 'boku7/HOLLOW' -DestRoot $script:BofRoot }) }
         @{ Name = 'injectAmsiBypass';                Tiers = @({ Install-GitCloneOnly -Name 'injectAmsiBypass' -Repo 'boku7/injectAmsiBypass' -DestRoot $script:BofRoot }) }
         @{ Name = 'injectEtwBypass';                 Tiers = @({ Install-GitCloneOnly -Name 'injectEtwBypass' -Repo 'boku7/injectEtwBypass' -DestRoot $script:BofRoot }) }
-        @{ Name = 'Kerbeus-BOF';                     Tiers = @({ Install-FromSourceBofMake -Name 'Kerbeus-BOF' -Repo 'orthrus1775/Kerbeus-BOF.git' -DestRoot $script:BofRoot }) }
+        @{ Name = 'Kerbeus-BOF';                     Tiers = @({ Install-FromSourceBofMake -Name 'Kerbeus-BOF' -Repo 'orthrus1775/Kerbeus-BOF' -DestRoot $script:BofRoot }) }
         @{ Name = 'nanorobeus';                      Tiers = @({ Install-FromSourceBofMake -Name 'nanorobeus' -Repo 'orthrus1775/nanorobeus' -DestRoot $script:BofRoot }) }
         @{ Name = 'No-Consolation';                  Tiers = @({ Install-FromSourceBofMake -Name 'No-Consolation' -Repo 'fortra/No-Consolation' -DestRoot $script:BofRoot }) }
         @{ Name = 'OperatorsKit';                    Tiers = @({ Install-FromSourceBof -Name 'OperatorsKit' -Repo 'REDMED-X/OperatorsKit' -DestRoot $script:BofRoot -BuildScript 'compile-all.bat' }) }
@@ -2629,10 +2646,10 @@ function Get-PackageTable {
         # Release config is pinned to x64 in this repo, not AnyCPU.
         # Charon_ExternalPayloadVersion ships no .sln/.vcxproj (source-only) - not buildable here.
         @{ Name = 'RedTeamGrimoire';          Tiers = @({
-            $charonLegacy  = Install-FromSourceNative -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' -SlnPath 'Charon\Charon_v1_Legacy\Charon\Charon.vcxproj' -Platform x64
-            $doppelXObolos = Install-FromSourceNative -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' -SlnPath 'Doppelganger\DoppelgangerXObolos\Doppelganger.sln' -Platform x64
-            $doppelNoCrt   = Install-FromSourceNative -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' -SlnPath 'Doppelganger\Doppelganger_noCRT\Doppelganger.sln' -Platform x64
-            $doppelLegacy  = Install-FromSourceNative -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' -SlnPath 'Doppelganger\Doppelganger_v1_Legacy\Doppelganger.sln' -Platform x64
+            $charonLegacy  = Install-FromSourceNative -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' -SlnPath 'Charon\Charon_v1_Legacy\Charon\Charon.vcxproj' -Platform x64 -PlatformToolset 'v143'
+            $doppelXObolos = Install-FromSourceNative -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' -SlnPath 'Doppelganger\DoppelgangerXObolos\Doppelganger.sln' -Platform x64 -PlatformToolset 'v143'
+            $doppelNoCrt   = Install-FromSourceNative -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' -SlnPath 'Doppelganger\Doppelganger_noCRT\Doppelganger.sln' -Platform x64 -PlatformToolset 'v143'
+            $doppelLegacy  = Install-FromSourceNative -Name 'RedTeamGrimoire' -Repo 'vari-sh/RedTeamGrimoire' -SlnPath 'Doppelganger\Doppelganger_v1_Legacy\Doppelganger.sln' -Platform x64 -PlatformToolset 'v143'
             $charonLegacy -and $doppelXObolos -and $doppelNoCrt -and $doppelLegacy
         }) }
         @{ Name = 'StreamDivert';             Tiers = @({ Install-FromSourceNative -Name 'StreamDivert' -Repo 'jellever/StreamDivert' -SlnPath 'StreamDivert.sln' }) }
@@ -2643,7 +2660,7 @@ function Get-PackageTable {
         @{ Name = 'Crystal-Loaders';          Tiers = @({ Install-GitCloneOnly -Name 'Crystal-Loaders' -Repo 'rasta-mouse/Crystal-Loaders' }) }
         @{ Name = 'CS-Loader';                Tiers = @({ Install-GitCloneOnly -Name 'CS-Loader' -Repo 'Gality369/CS-Loader' }) }       
         @{ Name = 'EvilClippy';               Tiers = @({ Install-GitCloneOnly -Name 'EvilClippy' -Repo 'outflanknl/EvilClippy' }) }
-        @{ Name = 'Freeze';                   Tiers = @({ Install-FromSourceRust -Name 'Freeze' -Repo 'Tylous/Freeze' -Target 'x86_64-pc-windows-gnu' }) }
+        @{ Name = 'Freeze';                   Tiers = @({ Install-FromSourceRust -Name 'Freeze' -Repo 'Tylous/Freeze.rs' -Target 'x86_64-pc-windows-gnu' }) }
         @{ Name = 'Get-LAPSPasswords';        Tiers = @({ Install-GitCloneOnly -Name 'Get-LAPSPasswords' -Repo 'kfosaaen/Get-LAPSPasswords' }) }
         @{ Name = 'go-cookie-monster';        Tiers = @({ Install-FromSourceGo -Name 'go-cookie-monster' -Repo 'c2biz/go-cookie-monster' -Env @{ CGO_ENABLED = '1'; GOARCH = 'amd64'; GOOS = 'windows' } }) }
         @{ Name = 'GoBuster';                 Tiers = @({ Install-GoInstall -Name 'GoBuster' -Package 'github.com/OJ/gobuster/v3@latest' }) }
@@ -2751,6 +2768,7 @@ function Invoke-Stage1 {
 
     Disable-WindowsDefender
     Disable-ScreenSaver
+    Show-FileExtensions
     Disable-WindowsUpdates
     Install-SshServer
     Set-HighPerformancePowerPlan
@@ -2815,6 +2833,17 @@ function Invoke-Stage4 {
     Set-QuickAccess
     Set-QuickAccess -Path $script:PayloadRoot
     Set-Background
+
+    Complete-Stage -NextStage 5
+}
+
+function Invoke-Stage5 {
+    $script:CurrentStage = 5
+    Write-Status "`n=== Stage 5: cleanup and finalize ===" 'Magenta'
+
+    Clear-EventLogs
+    Optimize-VmDisk
+
     Complete-Installation
     try { Stop-Transcript | Out-Null } catch {}
 }
@@ -2837,14 +2866,17 @@ function Install-AllPackages {
 
             if (-not $done -and $attempt -lt 3) {
                 Write-Status "[!] [$name] attempt $attempt/3 failed - retrying" 'Yellow'
+                Start-Sleep -Seconds 10
             }
         }
 
         if (-not $done) {
             Write-Status "[x] [$name] all install tiers failed after 3 attempts - skipping" 'Red'
             Add-Result -Name $name -Status Skipped -Detail 'Failed'
+        } else {
+            Start-Sleep -Seconds 3
         }
-        Wait-ForStageBreakpoint -Message "[$name] done (success=$done) - press Enter for next package..."
+        # Wait-ForStageBreakpoint -Message "[$name] done (success=$done) - press Enter for next package..."
     }
 }
 
@@ -2859,6 +2891,7 @@ function Main {
         2 { Invoke-Stage2 }
         3 { Invoke-Stage3 }
         4 { Invoke-Stage4 }
+        5 { Invoke-Stage5 }
         default {
             Write-Status "[!] Unknown stage '$stage' - resetting to stage 1" 'Yellow'
             Set-RedWindowsStage -Stage 1
