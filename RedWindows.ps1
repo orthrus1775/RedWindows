@@ -600,6 +600,42 @@ function Wait-ForStageBreakpoint {
     }
 }
 
+function Set-Rebuild {
+    $sourcePath  = Join-Path $script:ToolsRoot 'RedWindows.ps1'
+    $rebuildPath = Join-Path $script:ToolsRoot 'Rebuild.ps1'
+
+    Write-Status "[-] [Rebuild script] generating $rebuildPath" 'Cyan'
+    try {
+        if (-not (Test-Path $sourcePath)) {
+            Write-Status "[!] [Rebuild script] $sourcePath not found - skipping" 'Yellow'
+            Add-Result -Name 'Rebuild script' -Status Skipped -Detail "$sourcePath not found"
+            return $false
+        }
+
+        $content = Get-Content -Path $sourcePath -Raw
+
+        # 'Continue' rather than 'Stop' - lets a one-off Install-* call made from this file
+        # survive an incidental stderr line from a tool that isn't wrapped in
+        # Invoke-NativeQuiet, instead of throwing a raw exception at the interactive prompt.
+        $content = $content.Replace("`$ErrorActionPreference = 'Stop'", "`$ErrorActionPreference = 'Continue'")
+
+        # Swap the trailing Main invocation for Initialize-Environment, so dot-sourcing this
+        # file sets up $script:ToolsRoot etc. without running the full staged install. The
+        # (?m)^...$ anchors keep this from also matching "function Main {".
+        $content = $content -replace '(?m)^Main\s*$', 'Initialize-Environment'
+
+        Set-Content -Path $rebuildPath -Value $content -NoNewline
+
+        Write-Status "[+] [Rebuild script] generated $rebuildPath" 'Green'
+        Add-Result -Name 'Rebuild script' -Status Installed -Detail $rebuildPath
+        return $true
+    } catch {
+        Write-Status "[!] [Rebuild script] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Rebuild script' -Status Skipped -Detail $_.Exception.Message
+        return $false
+    }
+}
+
 function Clear-EventLogs {
     Write-Status "[-] [Event logs] clearing" 'Cyan'
     try {
@@ -2164,7 +2200,9 @@ function Install-VS2022Components {
         'Microsoft.VisualStudio.ComponentGroup.NativeDesktop.Llvm.Clang',
 
         # Build tools
-        'Microsoft.Component.MSBuild', 
+        'Microsoft.Component.MSBuild',
+        'Microsoft.VisualStudio.Component.Roslyn.Compiler',
+        'Microsoft.VisualStudio.Component.Roslyn.LanguageServices',
 
         # .NET
         'Microsoft.Net.Component.4.8.SDK',
@@ -2685,6 +2723,8 @@ function Get-PackageTable {
             $yuubari  = Install-FromSourceNative -Name 'UACME' -Repo 'hfiref0x/UACME' -SlnPath 'Source\Yuubari\Yuubari.vcxproj'
             $akagi -and $akatsuki -and $fubuki -and $naka -and $yuubari
         }) }
+        @{ Name = 'Codeception';                Tiers = @({ Install-FromSourceDotNet -Name 'Codeception' -Repo 'sadreck/Codecepticon' -DestRoot $script:SharpToolsRoot }) }
+
     )
 }   
 
@@ -2832,6 +2872,7 @@ function Invoke-Stage5 {
     $script:CurrentStage = 5
     Write-Status "`n=== Stage 5: cleanup and finalize ===" 'Magenta'
 
+    Set-Rebuild
     Clear-EventLogs
     Optimize-VmDisk
 
