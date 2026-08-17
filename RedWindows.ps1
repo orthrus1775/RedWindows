@@ -2633,6 +2633,8 @@ function Get-PackageTable {
 
         # --- Untagged repos from verify-packages.md -> default C:\Tools\ ---
         @{ Name = 'AdaptixC2';                Tiers = @({ Install-GitCloneOnly -Name 'AdaptixC2' -Repo 'Adaptix-Framework/AdaptixC2' }) }
+        @{ Name = 'Crystal-Kit';              Tiers = @({ Install-GitCloneOnly -Name 'Crystal-Kit' -Repo 'rasta-mouse/Crystal-Kit' }) }
+        @{ Name = 'C2-Profiles';              Tiers = @({ Install-GitCloneOnly -Name 'Crystal-Kit' -Repo 'BC-SECURITY/Malleable-C2-Profiles' }) }
         @{ Name = 'BloodHound-Custom-Queries'; Tiers = @({ Install-GitCloneOnly -Name 'BloodHound-Custom-Queries' -Repo 'CompassSecurity/BloodHoundQueries' }) }
         @{ Name = 'Crystal-Loaders';          Tiers = @({ Install-GitCloneOnly -Name 'Crystal-Loaders' -Repo 'rasta-mouse/Crystal-Loaders' }) }
         @{ Name = 'CS-Loader';                Tiers = @({ Install-GitCloneOnly -Name 'CS-Loader' -Repo 'Gality369/CS-Loader' }) }       
@@ -2671,7 +2673,18 @@ function Get-PackageTable {
         @{ Name = 'RegPwnBOF';                Tiers = @({ Install-GitCloneOnly -Name 'RegPwnBOF' -Repo 'Flangvik/RegPwnBOF' -DestRoot $script:BofRoot }) }
         @{ Name = 'eicar.com';                Tiers = @({ Get-RemoteFile -Url 'https://secure.eicar.org/eicar_com.zip' -Destination (Join-Path $script:ToolsRoot 'eicar_com.zip') }) }
         @{ Name = 'eicar.txt';                Tiers = @({ Get-RemoteFile -Url 'https://secure.eicar.org/eicar.com.txt' -Destination (Join-Path $script:ToolsRoot 'eicar_com.txt') }) }
-        @{ Name = 'eicar.com2';                Tiers = @({ Get-RemoteFile -Url 'https://secure.eicar.org/eicar_com2.zip' -Destination (Join-Path $script:ToolsRoot 'eicar_com-2.zip') }) }
+        @{ Name = 'eicar.com2';               Tiers = @({ Get-RemoteFile -Url 'https://secure.eicar.org/eicar_com2.zip' -Destination (Join-Path $script:ToolsRoot 'eicar_com-2.zip') }) }
+        # UACME bundles several independent UAC-bypass methods, each its own .vcxproj under
+        # Source\ rather than one buildable tool - build each variant against the shared
+        # clone, same pattern as RedTeamGrimoire above.
+        @{ Name = 'UACME';                    Tiers = @({
+            $akagi    = Install-FromSourceNative -Name 'UACME' -Repo 'hfiref0x/UACME' -SlnPath 'Source\Akagi\uacme.vcxproj'
+            $akatsuki = Install-FromSourceNative -Name 'UACME' -Repo 'hfiref0x/UACME' -SlnPath 'Source\Akatsuki\Akatsuki.vcxproj'
+            $fubuki   = Install-FromSourceNative -Name 'UACME' -Repo 'hfiref0x/UACME' -SlnPath 'Source\Fubuki\dll.vcxproj'
+            $naka     = Install-FromSourceNative -Name 'UACME' -Repo 'hfiref0x/UACME' -SlnPath 'Source\Naka\Naka.vcxproj'
+            $yuubari  = Install-FromSourceNative -Name 'UACME' -Repo 'hfiref0x/UACME' -SlnPath 'Source\Yuubari\Yuubari.vcxproj'
+            $akagi -and $akatsuki -and $fubuki -and $naka -and $yuubari
+        }) }
     )
 }   
 
@@ -2695,6 +2708,7 @@ function Show-Summary {
 function Initialize-Environment {
     $script:ToolsRoot      = 'C:\Tools'
     $script:PayloadRoot    = 'C:\Payloads'
+    $script:cobaltstrike   = = Join-Path $script:ToolsRoot 'cobaltstrike'
     $script:UserProfileRoot = $env:USERPROFILE
     $script:AppDataLocal    = Join-Path $script:UserProfileRoot 'AppData\Local'
     $script:GoUserRoot      = Join-Path $script:UserProfileRoot 'go'
@@ -2716,7 +2730,7 @@ function Initialize-Environment {
     $allDirs = @(
         $script:ToolsRoot, $script:PayloadRoot, $script:DlRoot, $script:LogRoot,
         $script:BofRoot, $script:SharpToolsRoot, $script:CloudRoot, $script:PotatoRoot, $script:NimModsRoot,
-        $script:pipxtools, $script:AppDataLocal, $script:GoUserRoot, $script:NightmareEclipse
+        $script:pipxtools, $script:AppDataLocal, $script:GoUserRoot, $script:NightmareEclipse, $script:cobaltstrike
     )
     foreach ($dir in $allDirs) {
         if (!(Test-Path $dir)) {
