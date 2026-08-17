@@ -2746,9 +2746,9 @@ function Show-Summary {
 
 
 function Initialize-Environment {
-    $script:ToolsRoot      = 'C:\Tools'
-    $script:PayloadRoot    = 'C:\Payloads'
-    $script:cobaltstrike   = Join-Path $script:ToolsRoot 'cobaltstrike'
+    $script:ToolsRoot       = 'C:\Tools'
+    $script:PayloadRoot     = 'C:\Payloads'
+    $script:cobaltstrike    = Join-Path $script:ToolsRoot 'cobaltstrike'
     $script:UserProfileRoot = $env:USERPROFILE
     $script:AppDataLocal    = Join-Path $script:UserProfileRoot 'AppData\Local'
     $script:GoUserRoot      = Join-Path $script:UserProfileRoot 'go'
