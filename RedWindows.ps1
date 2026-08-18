@@ -2527,7 +2527,7 @@ function Get-PackageTable {
         # --- Password / hash cracking ---
         @{ Name = 'Hashcat';   Tiers = @({ Install-GitHubReleaseAsset -Name 'Hashcat' -Repo 'hashcat/hashcat' -AssetPattern '*.7z' -Extract7z }) }
 
-        @{ Name = 'SharpHound'; Tiers = @({ Install-GitHubReleaseAsset -Name 'SharpHound' -Repo 'SpecterOps/SharpHound' -DestRoot $script:SharpToolsRoot -AssetPattern '*.zip' -ExtractZip }) }
+        @{ Name = 'SharpHound'; Tiers = @({ Install-FromSourceDotNet -Name 'SharpHound' -Repo 'SpecterOps/SharpHound' -DestRoot $script:SharpToolsRoot }) }
         @{ Name = 'Rubeus';     Tiers = @({ Install-FromSourceDotNet -Name 'Rubeus' -Repo 'GhostPack/Rubeus' -DestRoot $script:SharpToolsRoot }) }
 
         @{ Name = 'Certify';    Tiers = @({ Install-FromSourceDotNet -Name 'Certify' -Repo 'GhostPack/Certify' -DestRoot $script:SharpToolsRoot -Ref 'bee728d' }) }
