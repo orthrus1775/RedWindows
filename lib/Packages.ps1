@@ -1,5 +1,3 @@
-# Package catalog loader - declarative entries live in packages.json
-
 function Resolve-PackageDestRoot {
     param([string]$Alias)
 

@@ -25,8 +25,7 @@ $ErrorActionPreference = 'Stop'
 # Configuration
 # =============================================================================
 
-# TEMPORARY: set to $true to pause and require Enter before each stage's reboot,
-# so you can validate the box's state before it moves on. Remove before shipping.
+# TEMPORARY: pause for Enter before each stage reboot. Set $false for unattended runs.
 $script:EnableStageBreakpoints = $true
 
 $script:AttackerUsername    = 'attacker'
@@ -41,8 +40,7 @@ $script:PayloadRoot     = 'C:\Payloads'
 # Library loader
 # =============================================================================
 
-# Capture at load time - $PSScriptRoot inside functions is unreliable when this
-# file is dot-sourced (e.g. Rebuild.ps1) vs run with -File.
+# Capture at load time; $PSScriptRoot inside functions is unreliable when dotsourced.
 $script:RedWindowsRoot = if ($PSScriptRoot) {
     $PSScriptRoot
 } elseif ($PSCommandPath) {
@@ -128,8 +126,7 @@ function Invoke-Stage2 {
 
     Disable-WindowsDefender
 
-    # Git also needs a fresh session for its PATH entry to resolve, so it
-    # gets its own stage rather than running inside Install-AllPackages.
+    # Git needs a fresh session for PATH; keep it out of Install-AllPackages.
     Install-WingetPackage 'Git'       'Git.Git'
     Install-WingetPackage 'Rust'      'Rustlang.Rustup'
     Install-WingetPackage 'ChooseNim' 'NimLang.ChooseNim'
@@ -160,8 +157,7 @@ function Invoke-Stage4 {
 
     Disable-WindowsDefender
 
-    # Runs here rather than in Stage 3 - VS2022 needs the fresh session that Complete-Stage's
-    # restart provides before its component installer/ServiceHub will start cleanly.
+    # VS2022 needs the fresh session from Complete-Stage's restart before components install cleanly.
     Install-VS2022Components
     Enable-NetFx35Feature
 
@@ -213,8 +209,7 @@ function Main {
     }
 }
 
-# Dot-source lib at *script* scope. Loading from inside a function (or ForEach-Object)
-# puts helpers in a child scope, so Initialize-Environment cannot see Write-Status.
+# Dot-source lib at script scope; loading inside a function hides helpers from other functions.
 $script:RedWindowsLibRoot = Join-Path $script:RedWindowsRoot 'lib'
 if (-not (Test-Path -LiteralPath $script:RedWindowsLibRoot)) {
     throw "RedWindows lib folder not found at '$script:RedWindowsLibRoot'. Clone/download the full repo (RedWindows.ps1 + lib/ + packages.json)."

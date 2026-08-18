@@ -110,8 +110,7 @@ function Complete-Stage {
     Register-ContinuationTask -ScriptPath $selfPath
 
     Write-Status "`n=== Stage complete - restarting to continue as stage $NextStage ===" 'Magenta'
-    # Flush the transcript to disk before the forced restart kills this process - the next
-    # stage's Start-Transcript -Append picks back up in the same file.
+    # Flush transcript before forced restart; next stage appends to the same file.
     try { Stop-Transcript | Out-Null } catch {}
     Wait-ForStageBreakpoint -Message "Validate stage before continuing to stage $NextStage, then press Enter to restart..."
     Start-Sleep -Seconds 30

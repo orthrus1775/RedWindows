@@ -70,9 +70,7 @@ function Install-MsysToolchain {
     Write-Status "[-] [MSYS2 toolchain] pacman -Syu (core update pass 2/2)" 'Cyan'
     C:\msys64\usr\bin\bash.exe -lc 'pacman -Syu --noconfirm --needed' | Out-Null
 
-    # BOF Makefiles (e.g. C2-Tool-Collection) build both x64 and x86 objects per source
-    # file, so both mingw-w64 toolchains are required - x86_64-only left i686-w64-mingw32-gcc
-    # unresolved and broke the x86 half of every such build.
+    # Need both mingw-w64 x64 and x86 toolchains for dual-arch BOF Makefiles.
     Write-Status "[-] [MSYS2 toolchain] installing base-devel, mingw-w64 x86_64/i686 gcc/cmake/qt6" 'Cyan'
     C:\msys64\usr\bin\bash.exe -lc 'pacman -S --noconfirm --needed base-devel mingw-w64-x86_64-toolchain mingw-w64-i686-toolchain mingw-w64-x86_64-cmake mingw-w64-x86_64-qt6' | Out-Null
     if ($LASTEXITCODE -ne 0) {
@@ -259,8 +257,7 @@ function Install-Jdk17 {
         return $false
     }
 
-    # The zip contains a single top-level "jdk-17.0.2" folder - move it into
-    # place rather than assuming the exact name, in case Oracle ever changes it.
+    # Zip has one top-level jdk-* folder; move it into place by discovery, not name.
     $extractedRoot = Get-ChildItem -Path $extractTemp -Directory | Select-Object -First 1
     if (-not $extractedRoot) {
         Write-Status "[!] [JDK 17] no top-level folder found in archive" 'Yellow'
@@ -271,7 +268,6 @@ function Install-Jdk17 {
     Move-Item -Path $extractedRoot.FullName -Destination $jdkHome
     Remove-Item -Path $extractTemp -Recurse -Force -ErrorAction SilentlyContinue
 
-    # Equivalent of Control Panel > Environment Variables > User "Path" > New
     Write-Status "[-] [JDK 17] adding $jdkBin to user PATH" 'Cyan'
     $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
     $pathEntries = if ($userPath) { $userPath -split ';' } else { @() }
@@ -302,9 +298,7 @@ function Install-FirefoxExtensions {
         return $false
     }
 
-    # policies.json force-installs by add-on guid, not by AMO slug, so each slug is
-    # resolved through the AMO API first. The guid is embedded in the signed xpi -
-    # a wrong/guessed guid here would just make Firefox silently reject the install.
+    # Resolve AMO slug -> signed XPI guid; guessed guids are silently rejected.
     $extensionSettings = [ordered]@{}
     foreach ($slug in $Slugs) {
         Write-Status "[-] [Firefox Extensions] resolving add-on id for $slug" 'Cyan'
@@ -335,9 +329,7 @@ function Install-FirefoxExtensions {
 
     $policy = @{ policies = @{ ExtensionSettings = $extensionSettings } }
     $policyJson = $policy | ConvertTo-Json -Depth 10
-    # Set-Content -Encoding UTF8 writes a BOM on Windows PowerShell 5.1 - Firefox's JSON
-    # parser silently rejects a BOM-prefixed policies.json (the whole file fails to parse,
-    # not just the unrecognized bytes), so write it out without one explicitly.
+    # Write policies.json without UTF-8 BOM (Firefox rejects BOM).
     [System.IO.File]::WriteAllText((Join-Path $distDir 'policies.json'), $policyJson, (New-Object System.Text.UTF8Encoding($false)))
 
     Write-Status "[+] [Firefox Extensions] policies.json written for $($extensionSettings.Count) extension(s) - installs on next Firefox launch" 'Green'
@@ -347,11 +339,7 @@ function Install-FirefoxExtensions {
 
 function Install-ChromeExtensions {
     param(
-        # Chrome Web Store extension IDs - verified directly against each listing's
-        # publisher/user count before adding (ModHeader was deliberately left out: its
-        # popular listing was pulled by Google/Microsoft in July 2026 after researchers
-        # found it exfiltrating browsing history, and every replacement listing since
-        # is unverified).
+        # Chrome extension IDs; ModHeader omitted (pulled for data exfil).
         [string[]]$ExtensionIds = @(
             'eimadpbcbfnmbkopoojfekhnkhdbieeh', # Dark Reader
             'gcknhkkoolaabfmlnjonogaaifnjlfnp', # FoxyProxy
@@ -399,10 +387,7 @@ function Install-VulnConfig {
         return $false
     }
 
-    # Runs as its own process rather than dot-sourced - the script defines its own helper
-    # functions (Test-IsAdministrator, Set-WorkingDirectories, etc.) and unconditionally
-    # self-executes Invoke-WinVulnsSetup at the bottom, so isolating it in a child process
-    # avoids colliding with RedWindows' own function/variable names in this session.
+    # Run vuln-config in a child process to avoid function/name collisions.
     Write-Status "[-] [VulnConfig] running vuln-config.ps1 (creates the 'LocalSupport' admin account + intentionally vulnerable services/tasks/registry)" 'Cyan'
     powershell.exe -ExecutionPolicy Bypass -NoProfile -File $destFile
     if ($LASTEXITCODE -ne 0) {
@@ -434,9 +419,7 @@ function Install-Client {
         $content = $content -replace '(?im)^\s*pause\s*$', '%WINDIR%\System32\timeout.exe /T 30 /NOBREAK'
         Set-Content -Path $batPath -Value $content -NoNewline
 
-        # build.bat doesn't cd to its own folder, so it inherits whatever CWD this was
-        # launched from (e.g. C:\Windows\system32 for the autologon scheduled task) and
-        # its relative cmake/dist paths resolve against the wrong directory.
+        # build.bat uses relative paths; run from its own directory.
         Push-Location (Split-Path -Path $batPath -Parent)
         try {
             cmd.exe /c "`"$batPath`""

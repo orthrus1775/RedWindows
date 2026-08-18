@@ -1,10 +1,6 @@
-# Host preparation: Defender, users, winget bootstrap, etc.
-
 function Disable-WindowsDefender {
     Write-Status "`n=== Disabling Windows Defender ===" 'Magenta'
-    # Best-effort: Tamper Protection (on by default on modern Windows) silently
-    # blocks both of these paths if it's enabled - that's expected, not a bug
-    # in this script. Turn Tamper Protection off manually first if these no-op.
+    # Best-effort; Tamper Protection may silently block these.
 
     try {
         Set-MpPreference -DisableRealtimeMonitoring $true `
@@ -53,8 +49,7 @@ function Disable-ScreenSaver {
 }
 
 function Enable-NumLock {
-    # Registry bit 1 (value 2) = NumLock on at logon. Also force it on for this
-    # session so the first stage doesn't wait for a reboot to take effect.
+    # Registry value 2 = NumLock on at logon; also toggle on for this session.
     Write-Status "[-] [NumLock] enabling" 'Cyan'
     try {
         $paths = @(
@@ -150,8 +145,7 @@ function Set-Background {
 public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
 '@ -ErrorAction SilentlyContinue
 
-        # WallpaperStyle 10 = Fill - avoids a stretched/tiled look regardless of the image's
-        # native resolution vs. the target's display resolution.
+        # WallpaperStyle 10 = Fill (avoids stretch/tile across resolutions).
         Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name WallpaperStyle -Value '10'
         Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name TileWallpaper -Value '0'
 
@@ -215,8 +209,7 @@ function Install-SshServer {
 function Add-PythonFirewallRule {
     Write-Status "[-] [Python firewall] adding Private/Public allow rules" 'Cyan'
     try {
-        # Same PATH-staleness issue as Install-PipPackage - Python was just installed via
-        # winget earlier in this same Stage 3 process.
+        # Refresh PATH; package was just installed via winget in this process.
         Update-SessionPath
         $python = Get-Command python -ErrorAction SilentlyContinue
         if (-not $python) {
@@ -251,8 +244,7 @@ function Install-WindowsUpdates {
         }
         Import-Module PSWindowsUpdate
 
-        # -IgnoreReboot, not -AutoReboot - Complete-Stage restarts once the rest of Stage 1
-        # (attacker user, autologin, winget, etc.) has finished, not the moment updates land.
+        # IgnoreReboot: Complete-Stage restarts after the rest of Stage 1 finishes.
         Install-WindowsUpdate -AcceptAll -IgnoreReboot -Confirm:$false | Out-Null
 
         Write-Status "[+] [Windows Update] updates installed" 'Green'
@@ -298,18 +290,15 @@ function New-RangeAdminUser {
     $Username = $script:RangeAdminUsername
 
     try {
-        # Check if user already exists
         $existingUser = Get-LocalUser -Name $Username -ErrorAction SilentlyContinue
         if ($existingUser) {
             Write-StatusMessage "User $Username already exists, skipping creation" "WARNING"
             return
         }
 
-        # Create the user
         New-LocalUser $Username -Password $Password -FullName "Range Admin" -Description "Range Engineering User"
         Write-StatusMessage "User $Username created successfully"
 
-        # Add to Administrators group
         Add-LocalGroupMember -Group "Administrators" -Member $Username
         Write-StatusMessage "User $Username added to Administrators group"
     }
@@ -346,9 +335,7 @@ function New-AttackerUser {
 }
 
 function Install-Autologon {
-    # Downloaded directly rather than via the winget-installed Sysinternals
-    # Suite package - this needs to work in Stage 1, before winget is
-    # guaranteed usable in the current session.
+    # Download Autologon directly; Stage 1 may run before winget is usable.
     $autologonDir = Join-Path $script:ToolsRoot 'SysInternals'
     $autologonExe = Join-Path $autologonDir 'Autologon64.exe'
 
@@ -396,8 +383,7 @@ function Disable-AutoLogin {
     try {
         $winlogonPath = 'HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon'
         Set-ItemProperty -Path $winlogonPath -Name AutoAdminLogon -Value '0' -ErrorAction Stop
-        # Autologon64.exe stashes the plaintext password here - clear it now that
-        # auto-login is no longer needed, rather than leaving it on disk indefinitely.
+        # Clear plaintext DefaultPassword Autologon64.exe left in the registry.
         Remove-ItemProperty -Path $winlogonPath -Name DefaultPassword -ErrorAction SilentlyContinue
 
         Write-Status "[+] [Auto-login] disabled" 'Green'

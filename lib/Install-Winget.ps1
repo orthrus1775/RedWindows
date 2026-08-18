@@ -18,11 +18,7 @@ function Install-WingetPackage {
         return $true
     }
 
-    # Piped to Out-Host rather than left bare - winget's install output is otherwise
-    # unsuppressed stdout, which becomes part of THIS function's own return value. A
-    # multi-element array is always truthy in PowerShell regardless of its contents, so
-    # Install-AllPackages's `if (& $tier)` would then see [<winget output>, $false] and
-    # read it as success even when the install actually failed below.
+    # Pipe to Out-Host so winget stdout isn't part of the return value (always-truthy).
     winget install --id $Id -e --accept-source-agreements --accept-package-agreements | Out-Host
     if ($LASTEXITCODE -eq 0) {
         Write-Status "[+] [$Name] installed via winget" 'Green'

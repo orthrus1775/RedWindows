@@ -44,8 +44,7 @@ function Install-GitHubReleaseAsset {
         [string]$AssetPattern,  # wildcard match against release asset file names
         [string]$Tag,           # optional - a specific tag instead of the latest release
         [switch]$ExtractZip,
-        # For .7z assets - Expand-Archive can't touch these, so shell out to 7-Zip
-        # (installed elsewhere in Get-PackageTable) instead.
+        # Expand-Archive can't handle .7z; shell out to 7-Zip instead.
         [switch]$Extract7z
     )
 

@@ -1,8 +1,5 @@
 function Find-MSBuildExe {
-    # vswhere ships with every VS2022 install (fixed path regardless of edition/locale) -
-    # use it to find the real Framework-hosted MSBuild.exe, which Fody-weaved legacy
-    # projects need (dotnet build hosts MSBuild on .NET Core and can't load Fody's
-    # Framework-only task assemblies, e.g. Mono.Cecil).
+    # Prefer Framework MSBuild.exe via vswhere (needed for Fody/legacy tasks).
     $vswhere = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
     if (Test-Path $vswhere) {
         $msbuildPath = & $vswhere -latest -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' 2>$null | Select-Object -First 1
@@ -14,10 +11,7 @@ function Find-MSBuildExe {
 }
 
 function Find-VsDevCmd {
-    # cl.exe/link.exe are never on PATH by default - they only resolve once VsDevCmd.bat has
-    # run and populated INCLUDE/LIB/PATH for the MSVC toolchain. Locate it the same way as
-    # Find-MSBuildExe, but require the actual C++ workload (a VS install can have MSBuild
-    # without the VC.Tools component, e.g. a .NET-only install).
+    # Locate VsDevCmd.bat via vswhere + C++ workload (MSBuild alone isn't enough).
     $vswhere = 'C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe'
     if (Test-Path $vswhere) {
         $installPath = & $vswhere -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null | Select-Object -First 1
@@ -46,9 +40,7 @@ function Invoke-InVsDevShell {
         return $false
     }
 
-    # PowerShell can't source a .bat's environment changes directly - chain the cd, the
-    # VsDevCmd.bat call, and the actual build command into one cmd.exe invocation so the
-    # build command inherits the INCLUDE/LIB/PATH that VsDevCmd.bat sets up.
+    # Chain VsDevCmd.bat + build in one cmd.exe so INCLUDE/LIB/PATH apply.
     $cmdLine = "cd /d `"$WorkingDirectory`" && call `"$vsDevCmd`" -arch=$Arch -no_logo && $Command"
     cmd.exe /c $cmdLine
     return ($LASTEXITCODE -eq 0)
@@ -122,11 +114,7 @@ function Repair-WinRTHintPaths {
         [string]$CloneDir
     )
 
-    # Some tools (e.g. SharpClipHistory) hardcode a HintPath to a specific Windows SDK
-    # WinRT contract version (Windows Kits\10\References\<sdkver>\<contract>\<cver>\...winmd).
-    # If that exact SDK isn't installed, the reference silently fails to resolve and the
-    # build picks up a conflicting WinRT projection elsewhere, causing a type-forwarder
-    # cycle. Repoint stale HintPaths at whatever contract version is actually installed.
+    # Repoint stale WinRT HintPaths to an installed SDK contract version.
     $refRoot = 'C:\Program Files (x86)\Windows Kits\10\References'
     if (-not (Test-Path $refRoot)) { return }
 
@@ -194,8 +182,7 @@ function Test-HasComReferences {
         [string]$CloneDir
     )
 
-    # <COMReference> (the ResolveComReference task, e.g. SharpRDP's MSTSCLib ActiveX
-    # reference) can't run under dotnet build's .NET-Core-hosted MSBuild either.
+    # COMReference needs Framework MSBuild (ResolveComReference).
     return [bool](Get-ChildItem -Path $CloneDir -Filter '*.csproj' -Recurse -ErrorAction SilentlyContinue | Where-Object {
         (Get-Content -Path $_.FullName -Raw) -match '<COMReference\b'
     })
@@ -206,9 +193,7 @@ function Test-HasResxResources {
         [string]$CloneDir
     )
 
-    # The classic GenerateResource task needs an x86 task host that dotnet build's
-    # .NET-Core-hosted MSBuild can't spawn (e.g. Whisker's DSInternals Resources.resx),
-    # regardless of the project's own PlatformTarget.
+    # .resx GenerateResource needs Framework MSBuild's x86 task host.
     return [bool](Get-ChildItem -Path $CloneDir -Filter '*.csproj' -Recurse -ErrorAction SilentlyContinue | Where-Object {
         (Get-Content -Path $_.FullName -Raw) -match '<EmbeddedResource\b[^>]*\.resx"'
     })
@@ -219,11 +204,7 @@ function Test-IsClassicProject {
         [string]$CloneDir
     )
 
-    # Old-style (non-SDK) .csproj files are far more reliable under the real Framework
-    # MSBuild.exe than dotnet build's SDK-hosted MSBuild, which has repeatedly shown gaps
-    # for these beyond the specific patterns above - e.g. ThreatCheck's plain
-    # <PackageReference> resolved into project.assets.json fine but never made it onto
-    # the compile line under `dotnet build`. Treat any non-SDK-style project as legacy.
+    # Non-SDK .csproj: use Framework MSBuild.exe, not dotnet build.
     return [bool](Get-ChildItem -Path $CloneDir -Filter '*.csproj' -Recurse -ErrorAction SilentlyContinue | Where-Object {
         (Get-Content -Path $_.FullName -Raw) -notmatch '<Project\s+Sdk='
     })
@@ -234,11 +215,7 @@ function Repair-StandInCosturaFody {
         [string]$CloneDir
     )
 
-    # StandIn pins Costura.Fody 1.6.2, which packages.config itself flags
-    # requireReinstallation="true" - it's incompatible with the Fody 2.5.0 it's also
-    # pinned to (Mono.Cecil version mismatch at weave time: "Could not load file or
-    # assembly 'Mono.Cecil, Version=0.10.0.0...'"). Bump both to a known-good pair
-    # (Costura.Fody 4.1.0 / Fody 6.0.0) and repoint the hardcoded paths accordingly.
+    # StandIn: bump Costura.Fody/Fody to a compatible pair.
     $target = Get-ChildItem -Path $CloneDir -Filter '*.csproj' -Recurse -ErrorAction SilentlyContinue | Where-Object {
         (Get-Content -Path $_.FullName -Raw) -match 'Costura\.Fody\.1\.6\.2'
     } | Select-Object -First 1
@@ -264,10 +241,7 @@ function Restore-LegacyHintPathPackages {
         [string]$CloneDir
     )
 
-    # Some tools (e.g. SharPersist) reference NuGet packages via plain <Reference HintPath>
-    # pointing into a ..\packages\<Id>.<Version>\ folder but never shipped a packages.config,
-    # so nothing ever restores them. Derive the package id/version straight from the
-    # HintPath and nuget-install whatever's missing.
+    # Restore packages referenced only via HintPath (no packages.config).
     $pattern = 'packages\\(?<pkg>[A-Za-z0-9_.\-]+?)\.(?<ver>\d+\.\d+\.\d+(?:\.\d+)?)\\'
     $seen = @{}
 
@@ -298,16 +272,7 @@ function Restore-PackagesConfigFolders {
         [string]$CloneDir
     )
 
-    # Modern nuget.exe (7.x) runs `nuget restore` through the MSBuild-based restore
-    # engine, which for these old non-SDK projects writes obj\project.assets.json /
-    # .nuget.g.props|targets but silently never populates the classic
-    # <ProjectDir>\packages\<Id>.<Version>\ folder that packages.config-era .csproj
-    # files hardcode into <Reference HintPath>, <Import Project>, and
-    # EnsureNuGetPackageBuildImports <Error Condition="!Exists(...)"> checks (seen on
-    # SharpSCCM: every packages.config entry, not just build-tool-only ones like
-    # ILMerge/dnMerge, was missing from packages\ despite "nuget restore" reporting
-    # success). `nuget install <packages.config>` uses the classic restore path and
-    # reliably extracts every listed package next to its packages.config.
+    # nuget restore (7.x) skips classic packages; use nuget install packages.config.
     Get-ChildItem -Path $CloneDir -Filter 'packages.config' -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
         $packagesDir = Join-Path $_.DirectoryName 'packages'
         Write-Status "[-] [$($_.Directory.BaseName)] nuget install $($_.Name) -> $packagesDir" 'Cyan'
@@ -319,8 +284,7 @@ function Restore-PackagesConfigFolders {
 }
 
 function Resolve-GitCloneUrl {
-    # Lets $Repo be either a "owner/repo" shorthand (resolved against github.com)
-    # or a full URL (e.g. a Gitea instance) passed through as-is.
+    # Accept owner/repo shorthand or a full clone URL.
     param(
         [string]$Repo
     )
@@ -332,10 +296,7 @@ function Resolve-GitCloneUrl {
 }
 
 function Invoke-GitCloneOrUpdate {
-    # Shared clone/fetch/pull step for the Install-FromSource*/Install-GitCloneOnly family.
-    # Retries transient failures (e.g. DNS blips) instead of leaving a half-cloned directory
-    # behind that a later "pull" silently fails against - and actually checks $LASTEXITCODE,
-    # since a failed git process doesn't throw so a bare try/catch here would swallow it.
+    # Shared clone/update with retries; check LASTEXITCODE (git doesn't throw).
     param(
         [Parameter(Mandatory)]
         [string]$Name,
@@ -381,8 +342,7 @@ function Invoke-GitCloneOrUpdate {
             Write-Status "[!] [$Name] git clone failed: $($_.Exception.Message)" 'Yellow'
         }
 
-        # A failed first-time clone can still leave a partial directory behind, which would
-        # make the next attempt take the "pull" branch above against a non-repo folder.
+        # Remove partial clone dirs so retries don't hit a non-repo folder.
         if (-not $existed -and (Test-Path $CloneDir)) {
             Remove-Item -Path $CloneDir -Recurse -Force -ErrorAction SilentlyContinue
         }
@@ -437,8 +397,7 @@ function Install-FromSourceDotNet {
     Repair-WinRTHintPaths -CloneDir $cloneDir
     Repair-StandInCosturaFody -CloneDir $cloneDir
 
-    # Same PATH-staleness issue as Install-PipPackage - the .NET SDK was just installed via
-    # winget earlier in this same Stage 3 process.
+    # Refresh PATH; package was just installed via winget in this process.
     Update-SessionPath
     if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
         Write-Status "[!] [$Name] cloned but the .NET SDK is not available - install it to build this" 'Yellow'
@@ -455,7 +414,7 @@ function Install-FromSourceDotNet {
         }
         $projectFile = Get-Item $projectFile
     } else {
-        # Most repos have exactly one .sln; a few (e.g. Net-GPPPassword) ship only a .csproj.
+        # Prefer .sln; fall back to a lone .csproj when no solution exists.
         $projectFile = Get-ChildItem -Path $cloneDir -Filter '*.sln' -Recurse | Select-Object -First 1
         if (-not $projectFile) {
             $projectFile = Get-ChildItem -Path $cloneDir -Filter '*.csproj' -Recurse | Select-Object -First 1
@@ -529,8 +488,7 @@ function Install-GitCloneOnly {
         [string]$Name,
         [string]$Repo,
         [string]$DestRoot = $script:ToolsRoot,
-        # Installs the repo's requirements.txt via pip after cloning - needed for script
-        # tools (e.g. SuperMega) that ship Python dependencies alongside the source.
+        # After clone, pip install requirements.txt when present.
         [switch]$PipRequirements,
         [switch]$SubModule
     )
@@ -576,8 +534,7 @@ function Install-FromSourceGo {
         [string]$Name,
         [string]$Repo,
         [string]$DestRoot = $script:ToolsRoot,
-        # Build-time env vars - needed for repos that require cross-compile settings
-        # (e.g. go-cookie-monster needs CGO_ENABLED/GOARCH/GOOS set explicitly).
+        # Build-time env vars for cross-compile (e.g. CGO_ENABLED/GOARCH/GOOS).
         [hashtable]$Env,
         [switch]$SubModule
     )
@@ -607,10 +564,7 @@ function Install-FromSourceGo {
             Set-Item -Path "Env:$key" -Value $Env[$key]
         }
 
-        # go build routinely writes non-fatal notices (module downloads, deprecation
-        # warnings) to stderr - see the Invoke-NativeQuiet comment for why *>$null alone
-        # isn't enough to keep those from aborting the script under $ErrorActionPreference
-        # = 'Stop'.
+        # go build stderr is chatty; Invoke-NativeQuiet avoids EAP Stop aborts.
         Invoke-NativeQuiet { go build -o $outExe . *>$null }
         if ($LASTEXITCODE -ne 0) {
             Write-Status "[!] [$Name] go build failed (exit $LASTEXITCODE)" 'Yellow'
@@ -696,7 +650,6 @@ function Install-FromSourceRust {
         }
         # $cargoArgs += @('--target', $Target)
         # $outDir = "$cloneDir\target\$Target\release"
-
     }
 
     Write-Status "[-] [$Name] cargo $($cargoArgs -join ' ')" 'Cyan'
@@ -725,14 +678,13 @@ function Install-FromSourceCMake {
         [string]$Ref,
         [switch]$SubModule,
 
-        # CMake generator (e.g. 'Ninja', 'Visual Studio 17 2022') - left unset to use
-        # whatever cmake picks as the default for the environment.
+        # CMake generator (default if unset).
         [string]$Generator,
-        # Generator platform/arch for multi-arch generators, e.g. -A x64 with the VS generators.
+        # Generator -A arch for multi-arch generators (e.g. VS + x64).
         [string]$Architecture,
-        # Extra -D defines to pass through to the configure step, e.g. @('-DUPX_CONSOLE=ON').
+        # Extra -D defines for configure (e.g. @('-DUPX_CONSOLE=ON')).
         [string[]]$CMakeArgs,
-        # Specific target to build instead of the generator's default ("all"/"ALL_BUILD").
+        # Specific --target instead of the generator default.
         [string]$Target,
         [switch]$Clean
     )
@@ -794,8 +746,7 @@ function Install-FromSourceBof {
         [string]$DestRoot = $script:ToolsRoot,
         [string]$Ref,
         [switch]$SubModule,
-        # Relative path (from the clone root) to the build script - BOFs invoke cl.exe/link.exe
-        # directly rather than going through a .sln, so there's no MSBuild project to target.
+        # Relative path to the BOF build script (cl/link, not MSBuild).
         [string]$BuildScript = 'make.bat',
         [string]$Arch = 'x64'
     )
@@ -814,9 +765,7 @@ function Install-FromSourceBof {
         return $false
     }
 
-    # Run from the build script's own directory, not the clone root - these scripts
-    # (e.g. Unhook-BOF's make.bat) commonly reference source files by a path relative to
-    # themselves rather than %~dp0, so they only work when invoked from where they live.
+    # build.bat uses relative paths; run from its own directory.
     $buildScriptDir  = Split-Path $buildScriptPath -Parent
     $buildScriptLeaf = Split-Path $buildScriptPath -Leaf
 
@@ -838,44 +787,26 @@ function Install-FromSourceBofMake {
         [string]$DestRoot = $script:ToolsRoot,
         [string]$Ref,
         [switch]$SubModule,
-        # Relative path (from the clone root) to the directory containing the Makefile -
-        # several BOF repos nest it (e.g. 'src').
+        # Relative path to the Makefile directory (e.g. 'src').
         [string]$MakeDir = '',
         [string]$MakeTarget,
 
-        # x86_64-w64-mingw32-gcc/strip are what mingw-w64-x86_64-toolchain actually installs
-        # under C:\msys64\mingw64\bin - most BOF Makefiles reference these exact names for
-        # their x64 compiler variable, but only ship the unprefixed 'strip.exe', not
-        # 'x86_64-w64-mingw32-strip'. Passed as blanket make command-line overrides below;
-        # make silently ignores overrides for variables a given Makefile never references,
-        # so this is safe across repos with different variable-naming conventions
-        # (CC vs CC_x64, STRIP vs STRIP_x64).
+        # Override CC/STRIP to mingw-w64 names actually installed under msys64.
         [string]$Cc64 = 'x86_64-w64-mingw32-gcc',
         [string]$Strip64 = 'strip',
 
-        # i686-w64-mingw32-gcc is what mingw-w64-i686-toolchain installs under
-        # C:\msys64\mingw32\bin - the x86 half of BOF Makefiles that build both
-        # architectures (CC_x86/STRIP_x86) needs this the same way the x64 half needs
-        # Cc64/Strip64 above. strip.exe is unprefixed here too, but it shares its name
-        # with mingw64\bin's strip.exe, which comes first on PATH - so this needs the
-        # full path rather than a bare name that would silently resolve to the wrong one.
+        # x86 strip needs a full path; bare strip.exe resolves to mingw64 first on PATH.
         [string]$Cc32 = 'i686-w64-mingw32-gcc',
         [string]$Strip32 = 'C:\msys64\mingw32\bin\strip.exe',
 
-        # Older BOF source routinely trips checks GCC 14+ promotes from warning to hard
-        # error by default in C mode (e.g. passing a SIZE_T* where beacon.h declares int*) -
-        # demote those back to warnings so pre-GCC14-era repos still build.
+        # Soften GCC 14+ errors that break older BOF C sources.
         [string[]]$ExtraCFlags = @(
             '-Wno-error=incompatible-pointer-types',
             '-Wno-error=implicit-function-declaration',
             '-Wno-error=int-conversion'
         ),
 
-        # Some repos bundle many independent BOFs, one per subfolder, rather than a single
-        # buildable tool (e.g. CS-Situational-Awareness-BOF has ~70 under src\SA). Build
-        # every Makefile found under -MakeDir instead of just one, tracking each subfolder
-        # as its own result so a handful of failures don't obscure everything else that
-        # built fine.
+        # Recursive: build each BOF subfolder (e.g. CS-Situational-Awareness-BOF).
         [switch]$Recursive
     )
 
@@ -966,18 +897,14 @@ function Install-FromSourceNative {
         [string]$Name,
         [string]$Repo,
         [string]$DestRoot = $script:ToolsRoot,
-        # Relative path (from the clone root) to the .sln/.slnx/.vcxproj to build. Required -
-        # unlike Install-FromSourceDotNet, native repos routinely ship several solutions
-        # (bundled dependency libraries, alternate variants) and there's no safe way to
-        # guess which one is "the" project to build.
+        # Required: native repos often ship multiple solutions; don't guess.
         [Parameter(Mandatory)]
         [string]$SlnPath,
         [string]$Platform,
         [string]$Configuration = 'Release',
         [string]$Ref,
 
-        # Overrides for old repos pinned to a Windows SDK / toolset that's no longer the
-        # VS default - left unset (i.e. not passed to MSBuild) unless the caller needs them.
+        # Optional SDK/toolset overrides for repos pinned to old VS defaults.
         [string]$WindowsSdkVersion,
         [string]$PlatformToolset,
 
@@ -1006,9 +933,7 @@ function Install-FromSourceNative {
         return $false
     }
 
-    # No NuGet restore step here - native C/C++ projects here don't use packages.config
-    # or PackageReference; dependencies are either vendored in-repo or resolved by the
-    # MSVC toolset/Windows SDK components installed alongside MSBuild.
+    # No NuGet restore; native deps are vendored or from the MSVC/SDK install.
     $buildArgs = @($projectFile, "/p:Configuration=$Configuration", '/verbosity:minimal')
     if ($Platform) { $buildArgs += "/p:Platform=$Platform" }
     if ($WindowsSdkVersion) { $buildArgs += "/p:WindowsTargetPlatformVersion=$WindowsSdkVersion" }
@@ -1052,7 +977,7 @@ function Install-PipPackage {
 }
 
 function Install-Pipx {
-    # See the comment in Install-PipPackage - same PATH-staleness issue applies here.
+    # Refresh PATH; package was just installed via winget in this process.
     Update-SessionPath
     if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
         Write-Status "[!] [pipx] python is not on PATH - skipping" 'Yellow'
@@ -1061,10 +986,7 @@ function Install-Pipx {
 
     Write-Status "[-] [pipx] pip install pipx" 'Cyan'
 
-    # Same stderr-becomes-terminating-error issue Invoke-NativeQuiet's comment describes -
-    # pip's "WARNING: The script pipx.exe is installed in '...' which is not on PATH" line
-    # goes to stderr on a fresh install and would otherwise abort this function before
-    # ensurepath ever runs, leaving pipx.exe on disk but unreachable from PATH.
+    # pip stderr can terminate under EAP Stop; use Invoke-NativeQuiet before ensurepath.
     Invoke-NativeQuiet { python -m pip install pipx *>$null }
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [pipx] pip install failed (exit $LASTEXITCODE)" 'Yellow'

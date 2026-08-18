@@ -14,8 +14,7 @@ function New-SshKeyPair {
             New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
         }
 
-        # '""' (not '') - PowerShell drops truly-empty native-exe arguments, so this is
-        # the standard workaround to get ssh-keygen an empty -N passphrase non-interactively.
+        # Use '""' for empty -N; PowerShell drops truly-empty native args.
         Invoke-NativeQuiet { ssh-keygen -t ed25519 -f $keyPath -N '""' -q *>$null }
         if ($LASTEXITCODE -ne 0) {
             throw "ssh-keygen exited with code $LASTEXITCODE"
@@ -108,8 +107,7 @@ function Set-Rebuild {
         # Interactive rebuilds should survive chatty-tool stderr instead of aborting.
         $content = $content.Replace("`$ErrorActionPreference = 'Stop'", "`$ErrorActionPreference = 'Continue'")
 
-        # Swap the staged Main run for env init only. Lib is already dotsourced at
-        # script scope when this file loads, so Import-RedWindowsLib is not needed.
+        # Swap staged Main for env init only; lib is already dotsourced at script scope.
         $replacement = '${1}Initialize-Environment'
         $content = $content -replace '(?m)^(\s*)Main\s*$', $replacement
 
@@ -132,10 +130,7 @@ function Clear-EventLogs {
         $cleared = 0
         $failed = 0
         foreach ($log in $logs) {
-            # Some logs (e.g. disabled channels, ones with retention locks) refuse to clear.
-            # With $ErrorActionPreference = 'Stop' set globally, wevtutil's stderr for those
-            # becomes a terminating error even through 2>$null - Invoke-NativeQuiet relaxes
-            # that for the call so a single uncooperative log doesn't abort the whole loop.
+            # wevtutil stderr can terminate under EAP Stop; use Invoke-NativeQuiet.
             Invoke-NativeQuiet { wevtutil.exe cl "$($log.LogName)" *>$null }
             if ($LASTEXITCODE -eq 0) { $cleared++ } else { $failed++ }
         }
@@ -165,11 +160,7 @@ function Optimize-VmDisk {
             return $false
         }
 
-        # Capture output (incl. stderr) rather than letting it stream straight to the
-        # transcript - under the global $ErrorActionPreference = 'Stop', stderr text would
-        # otherwise throw before $LASTEXITCODE is even checked, and without capturing it
-        # the actual reason for a failure (e.g. shrink disabled in the vmx) only lives in
-        # the transcript instead of the results log.
+        # Capture stderr via Invoke-NativeQuiet so EAP Stop doesn't abort before LASTEXITCODE.
         $output = (Invoke-NativeQuiet { & $vmwareToolboxCmd disk shrink C:\ 2>&1 } | Out-String).Trim()
         if ($output) { Write-Status $output 'DarkGray' }
         if ($LASTEXITCODE -ne 0) {
@@ -189,9 +180,7 @@ function Optimize-VmDisk {
 }
 
 function Remove-LocalSupportUser {
-    # vuln-config.ps1 (Install-VulnConfig, Stage 3) creates this account as one of its
-    # intentional privesc vectors - it's only needed for the vulnerable-config window
-    # between Stage 3 and Stage 4, not for the finished box.
+    # Remove vuln-config support user; only needed between Stage 3 and 4.
     Write-Status "[-] [LocalSupport user] removing (created by vuln-config.ps1)" 'Cyan'
     try {
         $existingUser = Get-LocalUser -Name 'LocalSupport' -ErrorAction SilentlyContinue
@@ -217,8 +206,7 @@ function Remove-LocalSupportUser {
 function Show-Summary {
     Write-Status "`n=== Summary (all stages) ===" 'Magenta'
 
-    # $script:Results only holds this process's entries; every stage runs in its own process
-    # (the machine reboots between them), so the full run's results live in $script:ResultsCsv.
+    # Full run results live in ResultsCsv across stage reboots.
     $allResults = if (Test-Path $script:ResultsCsv) { Import-Csv -Path $script:ResultsCsv } else { $script:Results }
     $allResults | Sort-Object Stage, Status, Name | Format-Table -Property Stage, Name, Status, Detail -AutoSize
 
@@ -257,6 +245,5 @@ function Install-AllPackages {
         } else {
             Start-Sleep -Seconds 3
         }
-        # Wait-ForStageBreakpoint -Message "[$name] done (success=$done) - press Enter for next package..."
     }
 }
