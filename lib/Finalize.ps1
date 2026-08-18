@@ -108,9 +108,9 @@ function Set-Rebuild {
         # Interactive rebuilds should survive chatty-tool stderr instead of aborting.
         $content = $content.Replace("`$ErrorActionPreference = 'Stop'", "`$ErrorActionPreference = 'Continue'")
 
-        # Swap the staged Main run for lib load + env init only. Keep the
-        # InvocationName guard so dot-sourcing Rebuild.ps1 still does nothing.
-        $replacement = '${1}Import-RedWindowsLib' + "`r`n" + '${1}Initialize-Environment'
+        # Swap the staged Main run for env init only. Lib is already dotsourced at
+        # script scope when this file loads, so Import-RedWindowsLib is not needed.
+        $replacement = '${1}Initialize-Environment'
         $content = $content -replace '(?m)^(\s*)Main\s*$', $replacement
 
         Set-Content -LiteralPath $rebuildPath -Value $content -NoNewline -Encoding UTF8

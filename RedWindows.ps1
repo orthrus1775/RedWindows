@@ -51,18 +51,6 @@ $script:RedWindowsRoot = if ($PSScriptRoot) {
     Split-Path -Parent $MyInvocation.MyCommand.Path
 }
 
-function Import-RedWindowsLib {
-    $libRoot = Join-Path $script:RedWindowsRoot 'lib'
-    if (-not (Test-Path $libRoot)) {
-        throw "RedWindows lib folder not found at '$libRoot'. Clone/download the full repo (RedWindows.ps1 + lib/)."
-    }
-    # Use foreach (not ForEach-Object): dot-sourcing inside a pipeline scriptblock
-    # defines functions in that child scope, so they vanish when the block ends.
-    foreach ($file in (Get-ChildItem -Path $libRoot -Filter '*.ps1' | Sort-Object Name)) {
-        . $file.FullName
-    }
-}
-
 # =============================================================================
 # Environment + staged install
 # =============================================================================
@@ -206,7 +194,6 @@ function Invoke-Stage5 {
 }
 
 function Main {
-    Import-RedWindowsLib
     Initialize-Environment
 
     $stage = Get-RedWindowsStage
@@ -224,6 +211,16 @@ function Main {
             Invoke-Stage1
         }
     }
+}
+
+# Dot-source lib at *script* scope. Loading from inside a function (or ForEach-Object)
+# puts helpers in a child scope, so Initialize-Environment cannot see Write-Status.
+$script:RedWindowsLibRoot = Join-Path $script:RedWindowsRoot 'lib'
+if (-not (Test-Path -LiteralPath $script:RedWindowsLibRoot)) {
+    throw "RedWindows lib folder not found at '$script:RedWindowsLibRoot'. Clone/download the full repo (RedWindows.ps1 + lib/ + packages.json)."
+}
+foreach ($file in (Get-ChildItem -Path $script:RedWindowsLibRoot -Filter '*.ps1' | Sort-Object Name)) {
+    . $file.FullName
 }
 
 if ($MyInvocation.InvocationName -ne '.') {
