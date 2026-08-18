@@ -18,29 +18,33 @@ function Set-RedWindowsStage {
 function Save-SelfCopy {
     $persistentScript = Join-Path $script:ToolsRoot 'RedWindows.ps1'
     $persistentLib = Join-Path $script:ToolsRoot 'lib'
+    $persistentPackages = Join-Path $script:ToolsRoot 'packages.json'
 
     $scriptSource = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
     if (-not $scriptSource) { return $persistentScript }
 
     $repoRoot = Split-Path -Parent $scriptSource
     $libSource = Join-Path $repoRoot 'lib'
+    $packagesSource = Join-Path $repoRoot 'packages.json'
 
     if ($scriptSource -ne $persistentScript) {
         Copy-Item -Path $scriptSource -Destination $persistentScript -Force
     }
 
-    if (Test-Path $libSource) {
-        if (Test-Path $persistentLib) {
-            Remove-Item -Path $persistentLib -Recurse -Force
-        }
-        Copy-Item -Path $libSource -Destination $persistentLib -Recurse -Force
+    if (-not (Test-Path -LiteralPath $libSource)) {
+        throw "Save-SelfCopy: lib folder missing at '$libSource'. Stage continuation will fail without it."
     }
-
-    $packagesSource = Join-Path $repoRoot 'packages.json'
-    if (Test-Path -LiteralPath $packagesSource) {
-        Copy-Item -Path $packagesSource -Destination (Join-Path $script:ToolsRoot 'packages.json') -Force
+    if (Test-Path -LiteralPath $persistentLib) {
+        Remove-Item -Path $persistentLib -Recurse -Force
     }
+    Copy-Item -Path $libSource -Destination $persistentLib -Recurse -Force
 
+    if (-not (Test-Path -LiteralPath $packagesSource)) {
+        throw "Save-SelfCopy: packages.json missing at '$packagesSource'."
+    }
+    Copy-Item -Path $packagesSource -Destination $persistentPackages -Force
+
+    Write-Status "[+] [Self-copy] $persistentScript + lib\ + packages.json" 'Green'
     return $persistentScript
 }
 
@@ -56,7 +60,9 @@ function Register-ContinuationTask {
             Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
         }
 
-        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-ExecutionPolicy Bypass -NoExit -File `"$ScriptPath`""
+        # -WindowStyle Normal so the post-reboot window is visible (Highest tasks often look "stuck").
+        $arg = "-NoLogo -NoExit -ExecutionPolicy Bypass -WindowStyle Normal -File `"$ScriptPath`""
+        $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg -WorkingDirectory $script:ToolsRoot
         $trigger   = New-ScheduledTaskTrigger -AtLogOn -User $script:AttackerUsername
         $principal = New-ScheduledTaskPrincipal -UserId $script:AttackerUsername -LogonType Interactive -RunLevel Highest
         $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2)

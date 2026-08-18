@@ -21,6 +21,8 @@ summary rather than stopping the run.
 
 $ErrorActionPreference = 'Stop'
 
+Write-Host "[RedWindows] starting from $PSCommandPath" -ForegroundColor Cyan
+
 # =============================================================================
 # Configuration
 # =============================================================================
@@ -211,12 +213,17 @@ function Main {
 
 # Dot-source lib at script scope; loading inside a function hides helpers from other functions.
 $script:RedWindowsLibRoot = Join-Path $script:RedWindowsRoot 'lib'
+Write-Host "[RedWindows] loading lib from $script:RedWindowsLibRoot" -ForegroundColor Cyan
 if (-not (Test-Path -LiteralPath $script:RedWindowsLibRoot)) {
-    throw "RedWindows lib folder not found at '$script:RedWindowsLibRoot'. Clone/download the full repo (RedWindows.ps1 + lib/ + packages.json)."
+    $msg = "RedWindows lib folder not found at '$script:RedWindowsLibRoot'. Copy Desktop\RedWindows\lib and packages.json to C:\Tools\ then re-run."
+    Write-Host "[!] $msg" -ForegroundColor Red
+    try { Add-Type -AssemblyName PresentationFramework; [System.Windows.MessageBox]::Show($msg, 'RedWindows') } catch {}
+    throw $msg
 }
 foreach ($file in (Get-ChildItem -Path $script:RedWindowsLibRoot -Filter '*.ps1' | Sort-Object Name)) {
     . $file.FullName
 }
+Write-Host "[RedWindows] lib loaded ($((Get-ChildItem $script:RedWindowsLibRoot -Filter '*.ps1').Count) files)" -ForegroundColor Green
 
 if ($MyInvocation.InvocationName -ne '.') {
     Main
