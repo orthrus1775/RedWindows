@@ -2673,7 +2673,7 @@ function Get-PackageTable {
         # --- Untagged repos from verify-packages.md -> default C:\Tools\ ---
         @{ Name = 'AdaptixC2';                Tiers = @({ Install-GitCloneOnly -Name 'AdaptixC2' -Repo 'Adaptix-Framework/AdaptixC2' }) }
         @{ Name = 'Crystal-Kit';              Tiers = @({ Install-GitCloneOnly -Name 'Crystal-Kit' -Repo 'rasta-mouse/Crystal-Kit' }) }
-        @{ Name = 'C2-Profiles';              Tiers = @({ Install-GitCloneOnly -Name 'Crystal-Kit' -Repo 'BC-SECURITY/Malleable-C2-Profiles' }) }
+        @{ Name = 'C2-Profiles';              Tiers = @({ Install-GitCloneOnly -Name 'C2-Profiles' -Repo 'BC-SECURITY/Malleable-C2-Profiles' }) }
         @{ Name = 'BloodHound-Custom-Queries'; Tiers = @({ Install-GitCloneOnly -Name 'BloodHound-Custom-Queries' -Repo 'CompassSecurity/BloodHoundQueries' }) }
         @{ Name = 'Crystal-Loaders';          Tiers = @({ Install-GitCloneOnly -Name 'Crystal-Loaders' -Repo 'rasta-mouse/Crystal-Loaders' }) }
         @{ Name = 'CS-Loader';                Tiers = @({ Install-GitCloneOnly -Name 'CS-Loader' -Repo 'Gality369/CS-Loader' }) }       
