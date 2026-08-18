@@ -129,10 +129,10 @@ function Invoke-Stage2 {
     Disable-WindowsDefender
 
     # Git needs a fresh session for PATH; keep it out of Install-AllPackages.
-    Install-WingetPackage 'Git'       'Git.Git'
-    Install-WingetPackage 'Rust'      'Rustlang.Rustup'
-    Install-WingetPackage 'ChooseNim' 'NimLang.ChooseNim'
-    Install-WingetPackage 'Python 3.13' 'Python.Python.3.13'
+    $null = Install-WingetPackage 'Git'       'Git.Git'
+    $null = Install-WingetPackage 'Rust'      'Rustlang.Rustup'
+    $null = Install-WingetPackage 'ChooseNim' 'NimLang.ChooseNim'
+    $null = Install-WingetPackage 'Python 3.13' 'Python.Python.3.13'
     Add-PythonFirewallRule
     Complete-Stage -NextStage 3
 }
@@ -144,10 +144,10 @@ function Invoke-Stage3 {
     Disable-WindowsDefender
     Install-VulnConfig
     Install-ChooseNim
-    Install-WingetPackage 'Go' 'GoLang.Go'
-    Install-WingetPackage '.NET SDK' 'Microsoft.DotNet.SDK.8'
-    Install-WingetPackage 'NuGet' 'Microsoft.NuGet'
-    Install-WingetPackage 'Visual Studio 2022 Community' 'Microsoft.VisualStudio.2022.Community'
+    $null = Install-WingetPackage 'Go' 'GoLang.Go'
+    $null = Install-WingetPackage '.NET SDK' 'Microsoft.DotNet.SDK.8'
+    $null = Install-WingetPackage 'NuGet' 'Microsoft.NuGet'
+    $null = Install-WingetPackage 'Visual Studio 2022 Community' 'Microsoft.VisualStudio.2022.Community'
     Install-Pipx
 
     Complete-Stage -NextStage 4

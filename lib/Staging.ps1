@@ -32,6 +32,21 @@ function Save-SelfCopy {
     $libSource = Join-Path $repoRoot 'lib'
     $packagesSource = Join-Path $repoRoot 'packages.json'
 
+    # Already running from C:\Tools (post-reboot stages): source == destination.
+    # Do not Remove-Item lib and then Copy-Item onto itself — that deletes the tree.
+    $repoFull = [System.IO.Path]::GetFullPath($repoRoot).TrimEnd('\')
+    $toolsFull = [System.IO.Path]::GetFullPath($script:ToolsRoot).TrimEnd('\')
+    if ($repoFull -eq $toolsFull) {
+        if (-not (Test-Path -LiteralPath $persistentLib)) {
+            throw "Save-SelfCopy: running from $toolsFull but lib\ is missing. Restore lib\ and packages.json."
+        }
+        if (-not (Test-Path -LiteralPath $persistentPackages)) {
+            throw "Save-SelfCopy: running from $toolsFull but packages.json is missing."
+        }
+        Write-Status "[+] [Self-copy] already at $toolsFull - skip" 'DarkGray'
+        return $persistentScript
+    }
+
     if ($scriptSource -ne $persistentScript) {
         Copy-Item -Path $scriptSource -Destination $persistentScript -Force
     }
