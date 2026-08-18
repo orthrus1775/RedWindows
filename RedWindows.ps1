@@ -2175,6 +2175,7 @@ function Install-VS2022Components {
 
     $vsComponents = @(
         'Microsoft.VisualStudio.Workload.NativeDesktop',
+        'Microsoft.VisualStudio.Workload.ManagedDesktop',
 
         # MSVC toolsets
         'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
@@ -2728,6 +2729,17 @@ function Get-PackageTable {
     )
 }   
 
+function Install-ConfuseEx {
+    Push-Location $script:SharpToolsRoot
+    mkdir ConfuserEx-Build
+    cd ConfuserEx-Build
+    git clone https://github.com/mkaring/ConfuserEx.git
+    cd ConfuserEx
+    git clone https://github.com/0xd4d/dnlib.git
+    dotnet restore Confuser2.sln
+    dotnet build Confuser2.sln -c Release
+}
+
 
 function Show-Summary {
     Write-Status "`n=== Summary (all stages) ===" 'Magenta'
@@ -2860,6 +2872,7 @@ function Invoke-Stage4 {
     Install-NimPackages
 
     Install-AllPackages
+    Install-ConfuseEx
     Install-Client
     Set-QuickAccess
     Set-QuickAccess -Path $script:PayloadRoot
