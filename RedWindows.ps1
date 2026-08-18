@@ -56,8 +56,10 @@ function Import-RedWindowsLib {
     if (-not (Test-Path $libRoot)) {
         throw "RedWindows lib folder not found at '$libRoot'. Clone/download the full repo (RedWindows.ps1 + lib/)."
     }
-    Get-ChildItem -Path $libRoot -Filter '*.ps1' | Sort-Object Name | ForEach-Object {
-        . $_.FullName
+    # Use foreach (not ForEach-Object): dot-sourcing inside a pipeline scriptblock
+    # defines functions in that child scope, so they vanish when the block ends.
+    foreach ($file in (Get-ChildItem -Path $libRoot -Filter '*.ps1' | Sort-Object Name)) {
+        . $file.FullName
     }
 }
 
