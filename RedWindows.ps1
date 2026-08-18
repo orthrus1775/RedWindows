@@ -115,8 +115,6 @@ function Invoke-Stage1 {
     Set-HighPerformancePowerPlan
     New-RangeAdminUser
 
-    Install-WindowsUpdates
-
     Install-Winget
 
     Complete-Stage -NextStage 2
@@ -179,8 +177,9 @@ function Invoke-Stage4 {
 
 function Invoke-Stage5 {
     $script:CurrentStage = 5
-    Write-Status "`n=== Stage 5: cleanup and finalize ===" 'Magenta'
+    Write-Status "`n=== Stage 5: Windows Update, cleanup and finalize ===" 'Magenta'
 
+    Install-WindowsUpdates
     New-SshKeyPair
     Set-SshCopyIdFunction
     Set-Rebuild

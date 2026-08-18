@@ -244,7 +244,7 @@ function Install-WindowsUpdates {
         }
         Import-Module PSWindowsUpdate
 
-        # IgnoreReboot: Complete-Stage restarts after the rest of Stage 1 finishes.
+        # IgnoreReboot: Stage 5 finishes cleanup then Complete-Installation restarts.
         Install-WindowsUpdate -AcceptAll -IgnoreReboot -Confirm:$false | Out-Null
 
         Write-Status "[+] [Windows Update] updates installed" 'Green'
