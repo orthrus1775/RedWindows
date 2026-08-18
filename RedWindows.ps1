@@ -600,6 +600,99 @@ function Wait-ForStageBreakpoint {
     }
 }
 
+function New-SshKeyPair {
+    $sshDir  = Join-Path $env:USERPROFILE '.ssh'
+    $keyPath = Join-Path $sshDir 'id_ed25519'
+
+    Write-Status "[-] [SSH keypair] generating ed25519 key" 'Cyan'
+    try {
+        if (Test-Path $keyPath) {
+            Write-Status "[+] [SSH keypair] already exists at $keyPath" 'DarkGray'
+            Add-Result -Name 'SSH keypair' -Status Installed -Detail 'already present'
+            return $true
+        }
+
+        if (-not (Test-Path $sshDir)) {
+            New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
+        }
+
+        # '""' (not '') - PowerShell drops truly-empty native-exe arguments, so this is
+        # the standard workaround to get ssh-keygen an empty -N passphrase non-interactively.
+        Invoke-NativeQuiet { ssh-keygen -t ed25519 -f $keyPath -N '""' -q *>$null }
+        if ($LASTEXITCODE -ne 0) {
+            throw "ssh-keygen exited with code $LASTEXITCODE"
+        }
+
+        Write-Status "[+] [SSH keypair] generated $keyPath" 'Green'
+        Add-Result -Name 'SSH keypair' -Status Installed -Detail $keyPath
+        return $true
+    } catch {
+        Write-Status "[!] [SSH keypair] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'SSH keypair' -Status Skipped -Detail $_.Exception.Message
+        return $false
+    }
+}
+
+function Set-SshCopyIdFunction {
+    Write-Status "[-] [ssh-copy-id] adding function to PowerShell profile" 'Cyan'
+    try {
+        if ((Test-Path $PROFILE) -and (Select-String -Path $PROFILE -Pattern '^function ssh-copy-id' -Quiet)) {
+            Write-Status "[+] [ssh-copy-id] already present in $PROFILE" 'DarkGray'
+            Add-Result -Name 'ssh-copy-id function' -Status Installed -Detail 'already present'
+            return $true
+        }
+
+        $profileDir = Split-Path -Path $PROFILE -Parent
+        if (-not (Test-Path $profileDir)) {
+            New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+        }
+
+        $funcDef = @'
+
+function ssh-copy-id {
+    param(
+        [string]$Server,
+        [string]$IdentityFile = "$env:USERPROFILE\.ssh\id_ed25519.pub",
+        [Alias('h')]
+        [switch]$Help
+    )
+
+    $usage = "Usage: ssh-copy-id <user@host> [-IdentityFile <path>] (default: $IdentityFile)"
+
+    if ($Help -or -not $Server) {
+        Write-Host $usage
+        return
+    }
+
+    if (-not (Test-Path $IdentityFile)) {
+        Write-Host "ssh-copy-id: identity file not found: $IdentityFile" -ForegroundColor Yellow
+        Write-Host $usage
+        return
+    }
+
+    try {
+        Get-Content $IdentityFile | ssh $Server "mkdir -p ~/.ssh && chmod 700 ~/.ssh && cat >> ~/.ssh/authorized_keys && chmod 600 ~/.ssh/authorized_keys"
+        if ($LASTEXITCODE -ne 0) {
+            throw "ssh exited with code $LASTEXITCODE"
+        }
+    } catch {
+        Write-Host "ssh-copy-id: $($_.Exception.Message)" -ForegroundColor Yellow
+        Write-Host $usage
+    }
+}
+'@
+        Add-Content -Path $PROFILE -Value $funcDef
+
+        Write-Status "[+] [ssh-copy-id] added to $PROFILE" 'Green'
+        Add-Result -Name 'ssh-copy-id function' -Status Installed -Detail $PROFILE
+        return $true
+    } catch {
+        Write-Status "[!] [ssh-copy-id] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'ssh-copy-id function' -Status Skipped -Detail $_.Exception.Message
+        return $false
+    }
+}
+
 function Set-Rebuild {
     $sourcePath  = Join-Path $script:ToolsRoot 'RedWindows.ps1'
     $rebuildPath = Join-Path $script:ToolsRoot 'Rebuild.ps1'
@@ -2885,6 +2978,8 @@ function Invoke-Stage5 {
     $script:CurrentStage = 5
     Write-Status "`n=== Stage 5: cleanup and finalize ===" 'Magenta'
 
+    New-SshKeyPair
+    Set-SshCopyIdFunction
     Set-Rebuild
     Clear-EventLogs
     Optimize-VmDisk
