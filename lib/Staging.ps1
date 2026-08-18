@@ -20,10 +20,15 @@ function Save-SelfCopy {
     $persistentLib = Join-Path $script:ToolsRoot 'lib'
     $persistentPackages = Join-Path $script:ToolsRoot 'packages.json'
 
-    $scriptSource = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
-    if (-not $scriptSource) { return $persistentScript }
+    # Use RedWindowsRoot (set when the entry script loaded), not $PSCommandPath —
+    # inside dotsourced lib\*.ps1, $PSCommandPath can point at lib\Staging.ps1 and
+    # produce a bogus ...\lib\lib path.
+    $repoRoot = $script:RedWindowsRoot
+    if (-not $repoRoot -or -not (Test-Path -LiteralPath (Join-Path $repoRoot 'RedWindows.ps1'))) {
+        throw "Save-SelfCopy: `$script:RedWindowsRoot is unset or invalid ('$repoRoot')."
+    }
 
-    $repoRoot = Split-Path -Parent $scriptSource
+    $scriptSource = Join-Path $repoRoot 'RedWindows.ps1'
     $libSource = Join-Path $repoRoot 'lib'
     $packagesSource = Join-Path $repoRoot 'packages.json'
 
