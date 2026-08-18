@@ -1,0 +1,1960 @@
+{
+  "packages": [
+    {
+      "name": "Nmap",
+      "category": "recon",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "Insecure.Nmap"
+        }
+      ]
+    },
+    {
+      "name": "Wireshark",
+      "category": "recon",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "WiresharkFoundation.Wireshark"
+        }
+      ]
+    },
+    {
+      "name": "PuTTY",
+      "category": "recon",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "PuTTY.PuTTY"
+        }
+      ]
+    },
+    {
+      "name": "MobaXterm",
+      "category": "recon",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "Mobatek.MobaXterm"
+        }
+      ]
+    },
+    {
+      "name": "Sysinternals Suite",
+      "category": "core",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "9P7KNL5RWT25"
+        }
+      ]
+    },
+    {
+      "name": "7-Zip",
+      "category": "core",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "7zip.7zip"
+        }
+      ]
+    },
+    {
+      "name": "Python 3.13",
+      "category": "core",
+      "enabled": false,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "Python.Python.3.13"
+        }
+      ]
+    },
+    {
+      "name": "Go",
+      "category": "core",
+      "enabled": false,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "GoLang.Go"
+        }
+      ]
+    },
+    {
+      "name": "Gitleaks",
+      "category": "core",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "Gitleaks.Gitleaks"
+        }
+      ]
+    },
+    {
+      "name": "vscode",
+      "category": "core",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "Microsoft.VisualStudioCode"
+        }
+      ]
+    },
+    {
+      "name": "Windows Terminal",
+      "category": "core",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "Microsoft.WindowsTerminal"
+        }
+      ]
+    },
+    {
+      "name": "Notepad++",
+      "category": "core",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "Notepad++.Notepad++"
+        }
+      ]
+    },
+    {
+      "name": "DB Browser SQLite",
+      "category": "core",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "DBBrowserForSQLite.DBBrowserForSQLite"
+        }
+      ]
+    },
+    {
+      "name": "KeePass",
+      "category": "core",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "DominikReichl.KeePass"
+        }
+      ]
+    },
+    {
+      "name": "Adobe Acrobat Reader",
+      "category": "core",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "Adobe.Acrobat.Reader.64-bit"
+        }
+      ]
+    },
+    {
+      "name": "JDK 17.0.2",
+      "category": "core",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "function",
+          "name": "Install-Jdk17"
+        }
+      ]
+    },
+    {
+      "name": "Firefox",
+      "category": "browsers",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "Mozilla.Firefox.ESR"
+        }
+      ]
+    },
+    {
+      "name": "Firefox Extensions",
+      "category": "browsers",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "function",
+          "name": "Install-FirefoxExtensions"
+        }
+      ]
+    },
+    {
+      "name": "Google Chrome",
+      "category": "browsers",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "Google.Chrome"
+        }
+      ]
+    },
+    {
+      "name": "Chrome Extensions",
+      "category": "browsers",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "function",
+          "name": "Install-ChromeExtensions"
+        }
+      ]
+    },
+    {
+      "name": "Burp Suite Community",
+      "category": "proxy",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "PortSwigger.BurpSuite.Community"
+        }
+      ]
+    },
+    {
+      "name": "Fiddler Classic",
+      "category": "proxy",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "Telerik.Fiddler.Classic"
+        }
+      ]
+    },
+    {
+      "name": "Hashcat",
+      "category": "cracking",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "release",
+          "repo": "hashcat/hashcat",
+          "assetPattern": "*.7z",
+          "extract7z": true
+        }
+      ]
+    },
+    {
+      "name": "SharpHound",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "SpecterOps/SharpHound",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "Rubeus",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "GhostPack/Rubeus",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "Certify",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "GhostPack/Certify",
+          "destRoot": "SharpTools",
+          "ref": "bee728d"
+        }
+      ]
+    },
+    {
+      "name": "PowerSploit",
+      "category": "clone",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "PowerShellMafia/PowerSploit"
+        }
+      ]
+    },
+    {
+      "name": "Responder",
+      "category": "clone",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "lgandx/Responder"
+        }
+      ]
+    },
+    {
+      "name": "ShadowHound",
+      "category": "clone",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "Friends-Security/ShadowHound"
+        }
+      ]
+    },
+    {
+      "name": "Impacket",
+      "category": "python",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "pipx",
+          "pipxUrl": "impacket"
+        }
+      ]
+    },
+    {
+      "name": "NetExec",
+      "category": "python",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "pipx",
+          "pipxUrl": "git+https://github.com/Pennyw0rth/NetExec"
+        }
+      ]
+    },
+    {
+      "name": "bloodyAD",
+      "category": "python",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "pipx",
+          "pipxUrl": "git+https://github.com/CravateRouge/bloodyAD.git"
+        }
+      ]
+    },
+    {
+      "name": "FaceDancer",
+      "category": "rust",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "rust",
+          "repo": "Tylous/FaceDancer",
+          "target": "x86_64-pc-windows-gnu"
+        }
+      ]
+    },
+    {
+      "name": "swarmer",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "release",
+          "repo": "praetorian-inc/swarmer",
+          "assetPattern": "swarmer.exe",
+          "tag": "v0.1.8"
+        }
+      ]
+    },
+    {
+      "name": "HiveSwarming",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "release",
+          "repo": "stormshield/HiveSwarming",
+          "assetPattern": "HiveSwarming.exe",
+          "tag": "v1.6"
+        }
+      ]
+    },
+    {
+      "name": "bof-collection",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "orthrus1775/BOF_Collection",
+          "destRoot": "BOF",
+          "recursive": true
+        }
+      ]
+    },
+    {
+      "name": "BOF-patchit",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "ScriptIdiot/BOF-patchit",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "BofRoast",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "cube0x0/BofRoast",
+          "destRoot": "BOF",
+          "makeDir": "BofRoast"
+        }
+      ]
+    },
+    {
+      "name": "C2-Tool-Collection",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "outflanknl/C2-Tool-Collection",
+          "destRoot": "BOF",
+          "makeDir": "BOF",
+          "recursive": true
+        }
+      ]
+    },
+    {
+      "name": "CredManBOF",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "jsecu/CredManBOF",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "CS-Remote-OPs-BOF",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "trustedsec/CS-Remote-OPs-BOF",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "CS-Situational-Awareness-BOF",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "trustedsec/CS-Situational-Awareness-BOF",
+          "destRoot": "BOF",
+          "makeDir": "src\\SA",
+          "recursive": true
+        }
+      ]
+    },
+    {
+      "name": "DelegationBOF",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "orthrus1775/DelegationBOF",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "HandleKatz_BOF",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "EspressoCake/HandleKatz_BOF",
+          "destRoot": "BOF",
+          "makeDir": "src"
+        }
+      ]
+    },
+    {
+      "name": "HOLLOW",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "boku7/HOLLOW",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "injectAmsiBypass",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "boku7/injectAmsiBypass",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "injectEtwBypass",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "boku7/injectEtwBypass",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "Kerbeus-BOF",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "orthrus1775/Kerbeus-BOF",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "nanorobeus",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "orthrus1775/nanorobeus",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "No-Consolation",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "fortra/No-Consolation",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "OperatorsKit",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bof",
+          "repo": "REDMED-X/OperatorsKit",
+          "destRoot": "BOF",
+          "buildScript": "compile-all.bat"
+        }
+      ]
+    },
+    {
+      "name": "PatchlessInlineExecute-Assembly",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bof",
+          "repo": "VoldeSec/PatchlessInlineExecute-Assembly",
+          "destRoot": "BOF",
+          "buildScript": "src\\compile.bat"
+        }
+      ]
+    },
+    {
+      "name": "reg_export-BOF",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "Valkyrie-Security/reg_export-BOF",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "PoolPartyBof",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "0xEr3bus/PoolPartyBof",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "SCShell",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "Mr-Un1k0d3r/SCShell",
+          "destRoot": "BOF",
+          "makeDir": "CS-BOF"
+        }
+      ]
+    },
+    {
+      "name": "ServiceMove-BOF",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "netero1010/ServiceMove-BOF",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "secinject",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "apokryptein/secinject",
+          "destRoot": "BOF",
+          "makeDir": "src"
+        }
+      ]
+    },
+    {
+      "name": "tgtdelegation",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "connormcgarr/tgtdelegation",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "ThreadlessInject-BOF",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "iilegacyyii/ThreadlessInject-BOF",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "Unhook-BOF",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bof",
+          "repo": "rsmudge/unhook-bof",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "ADSearch",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "tomcarver16/ADSearch",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "Net-GPPPassword",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "outflanknl/Net-GPPPassword",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "nopowershell",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "bitsadmin/nopowershell",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "RestrictedAdmin",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "GhostPack/RestrictedAdmin",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "Sharp-SMBExec",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "checkymander/Sharp-SMBExec",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpClipHistory",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "ReversecLabs/SharpClipHistory",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpCollection",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "Flangvik/SharpCollection",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpDPAPI",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "GhostPack/SharpDPAPI",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpDump",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "GhostPack/SharpDump",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharPersist",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "mandiant/SharPersist",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpExec",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "checkymander/Sharp-WMIExec",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpGPOAbuse",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "ReversecLabs/SharpGPOAbuse",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpLAPS",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "swisskyrepo/SharpLAPS",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpMapExec",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "cube0x0/SharpMapExec",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpRDP",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "0xthirteen/SharpRDP",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpSCCM",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "Mayyhem/SharpSCCM",
+          "destRoot": "SharpTools",
+          "platform": "x64"
+        }
+      ]
+    },
+    {
+      "name": "SharpSecDump",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "G0ldenGunSec/SharpSecDump",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "sharpsh",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "thelikes/sharpsh",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpUp",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "GhostPack/SharpUp",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpView",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "tevora-threat/SharpView",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpWMI",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "GhostPack/SharpWMI",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SQLRecon",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "skahwah/SQLRecon",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "StandIn",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "FuzzySecurity/StandIn",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "Whisker",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "eladshamir/Whisker",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "DotNetToJScript",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "tyranid/DotNetToJScript",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "ForgeCert",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "GhostPack/ForgeCert",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "GadgetToJScript",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "med0x2e/GadgetToJScript",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "Group3r",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "Group3r/Group3r",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "KeeThief",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "GhostPack/KeeThief",
+          "destRoot": "SharpTools",
+          "slnPath": "KeeTheft\\KeeTheft.sln"
+        }
+      ]
+    },
+    {
+      "name": "LdapSignCheck",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "cube0x0/LdapSignCheck",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "KrbRelayUp",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "Dec0ne/KrbRelayUp",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SauronEye",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "vivami/SauronEye",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SpoolSample",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "leechristensen/SpoolSample",
+          "destRoot": "SharpTools",
+          "slnPath": "SpoolSample\\SpoolSample.csproj",
+          "platform": "x64"
+        }
+      ]
+    },
+    {
+      "name": "ThreatCheck",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "rasta-mouse/ThreatCheck",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "BadAssMacros",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "Inf0secRabbit/BadAssMacros",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "MicroBurst",
+      "category": "cloud",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "NetSPI/MicroBurst",
+          "destRoot": "Cloud"
+        }
+      ]
+    },
+    {
+      "name": "TeamFiltration",
+      "category": "cloud",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "Flangvik/TeamFiltration",
+          "destRoot": "Cloud"
+        }
+      ]
+    },
+    {
+      "name": "ADConnectDump",
+      "category": "cloud",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "dirkjanm/adconnectdump",
+          "destRoot": "Cloud"
+        }
+      ]
+    },
+    {
+      "name": "Hot-Potato",
+      "category": "potato",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "davidmbillie/Hot-Potato",
+          "destRoot": "Potato"
+        }
+      ]
+    },
+    {
+      "name": "RottenPotato",
+      "category": "potato",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "multi",
+          "steps": [
+            {
+              "type": "dotnet",
+              "repo": "foxglovesec/RottenPotato",
+              "destRoot": "Potato",
+              "slnPath": "NHttp\\NHttp.sln"
+            },
+            {
+              "type": "dotnet",
+              "repo": "foxglovesec/RottenPotato",
+              "destRoot": "Potato",
+              "slnPath": "SharpCifs\\SharpCifs.sln"
+            },
+            {
+              "type": "dotnet",
+              "repo": "foxglovesec/RottenPotato",
+              "destRoot": "Potato",
+              "slnPath": "Potato\\Potato.sln"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "juicy-potato",
+      "category": "potato",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "native",
+          "repo": "ohpe/juicy-potato",
+          "slnPath": "JuicyPotato\\JuicyPotato.sln",
+          "destRoot": "Potato"
+        }
+      ]
+    },
+    {
+      "name": "RoguePotato",
+      "category": "potato",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "native",
+          "repo": "antonioCoco/RoguePotato",
+          "slnPath": "RoguePotato.sln",
+          "destRoot": "Potato"
+        }
+      ]
+    },
+    {
+      "name": "SweetPotato",
+      "category": "potato",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "CCob/SweetPotato",
+          "destRoot": "Potato"
+        }
+      ]
+    },
+    {
+      "name": "GenericPotato",
+      "category": "potato",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "micahvandeusen/GenericPotato",
+          "destRoot": "Potato"
+        }
+      ]
+    },
+    {
+      "name": "GodPotato",
+      "category": "potato",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "BeichenDream/GodPotato",
+          "destRoot": "Potato"
+        }
+      ]
+    },
+    {
+      "name": "nim-rev-shell",
+      "category": "nim",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "Sn1r/Nim-Reverse-Shell",
+          "destRoot": "NimMods"
+        }
+      ]
+    },
+    {
+      "name": "offensivenim",
+      "category": "nim",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "byt3bl33d3r/OffensiveNim",
+          "destRoot": "NimMods"
+        }
+      ]
+    },
+    {
+      "name": "nimcrypt2",
+      "category": "nim",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "icyguider/Nimcrypt2",
+          "destRoot": "NimMods"
+        }
+      ]
+    },
+    {
+      "name": "nim-registry",
+      "category": "nim",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "miere43/nim-registry",
+          "destRoot": "NimMods"
+        }
+      ]
+    },
+    {
+      "name": "nimbus",
+      "category": "nim",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "D3Ext/Nimbus",
+          "destRoot": "NimMods"
+        }
+      ]
+    },
+    {
+      "name": "partyloader",
+      "category": "nim",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "itaymigdal/PartyLoader",
+          "destRoot": "NimMods"
+        }
+      ]
+    },
+    {
+      "name": "Dumpert",
+      "category": "native",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "multi",
+          "steps": [
+            {
+              "type": "native",
+              "repo": "outflanknl/Dumpert",
+              "slnPath": "Dumpert\\Outflank-Dumpert.sln"
+            },
+            {
+              "type": "native",
+              "repo": "outflanknl/Dumpert",
+              "slnPath": "Dumpert-DLL\\Outflank-Dumpert-DLL.sln"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "IIS-Raid",
+      "category": "native",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "native",
+          "repo": "0x09AL/IIS-Raid",
+          "slnPath": "module\\IIS-Backdoor.sln"
+        }
+      ]
+    },
+    {
+      "name": "PortBender",
+      "category": "native",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "native",
+          "repo": "praetorian-inc/PortBender",
+          "slnPath": "src\\PortBender\\PortBender.sln"
+        }
+      ]
+    },
+    {
+      "name": "RedTeamGrimoire",
+      "category": "native",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "multi",
+          "steps": [
+            {
+              "type": "native",
+              "repo": "vari-sh/RedTeamGrimoire",
+              "slnPath": "Charon\\Charon_v1_Legacy\\Charon\\Charon.vcxproj",
+              "platform": "x64",
+              "platformToolset": "v143"
+            },
+            {
+              "type": "native",
+              "repo": "vari-sh/RedTeamGrimoire",
+              "slnPath": "Doppelganger\\DoppelgangerXObolos\\Doppelganger.sln",
+              "platform": "x64",
+              "platformToolset": "v143"
+            },
+            {
+              "type": "native",
+              "repo": "vari-sh/RedTeamGrimoire",
+              "slnPath": "Doppelganger\\Doppelganger_noCRT\\Doppelganger.sln",
+              "platform": "x64",
+              "platformToolset": "v143"
+            },
+            {
+              "type": "native",
+              "repo": "vari-sh/RedTeamGrimoire",
+              "slnPath": "Doppelganger\\Doppelganger_v1_Legacy\\Doppelganger.sln",
+              "platform": "x64",
+              "platformToolset": "v143"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "StreamDivert",
+      "category": "native",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "native",
+          "repo": "jellever/StreamDivert",
+          "slnPath": "StreamDivert.sln"
+        }
+      ]
+    },
+    {
+      "name": "AdaptixC2",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "Adaptix-Framework/AdaptixC2"
+        }
+      ]
+    },
+    {
+      "name": "Crystal-Kit",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "rasta-mouse/Crystal-Kit"
+        }
+      ]
+    },
+    {
+      "name": "C2-Profiles",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "BC-SECURITY/Malleable-C2-Profiles"
+        }
+      ]
+    },
+    {
+      "name": "BloodHound-Custom-Queries",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "CompassSecurity/BloodHoundQueries"
+        }
+      ]
+    },
+    {
+      "name": "Crystal-Loaders",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "rasta-mouse/Crystal-Loaders"
+        }
+      ]
+    },
+    {
+      "name": "CS-Loader",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "Gality369/CS-Loader"
+        }
+      ]
+    },
+    {
+      "name": "EvilClippy",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "outflanknl/EvilClippy"
+        }
+      ]
+    },
+    {
+      "name": "Freeze",
+      "category": "rust",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "rust",
+          "repo": "Tylous/Freeze.rs",
+          "target": "x86_64-pc-windows-gnu"
+        }
+      ]
+    },
+    {
+      "name": "Get-LAPSPasswords",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "kfosaaen/Get-LAPSPasswords"
+        }
+      ]
+    },
+    {
+      "name": "go-cookie-monster",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "go",
+          "repo": "c2biz/go-cookie-monster",
+          "env": {
+            "CGO_ENABLED": "1",
+            "GOARCH": "amd64",
+            "GOOS": "windows"
+          }
+        }
+      ]
+    },
+    {
+      "name": "GoBuster",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "goInstall",
+          "package": "github.com/OJ/gobuster/v3@latest"
+        }
+      ]
+    },
+    {
+      "name": "GoWitness",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "goInstall",
+          "package": "github.com/sensepost/gowitness@latest"
+        }
+      ]
+    },
+    {
+      "name": "Invoke-DOSfuscation",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "danielbohannon/Invoke-DOSfuscation"
+        }
+      ]
+    },
+    {
+      "name": "Invoke-Obfuscation",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "danielbohannon/Invoke-Obfuscation"
+        }
+      ]
+    },
+    {
+      "name": "Kerbrute",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "goInstall",
+          "package": "github.com/ropnop/kerbrute@latest"
+        }
+      ]
+    },
+    {
+      "name": "LDAPNomNom",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "goInstall",
+          "package": "github.com/lkarlslund/ldapnomnom@latest"
+        }
+      ]
+    },
+    {
+      "name": "MailSniper",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "dafthack/MailSniper"
+        }
+      ]
+    },
+    {
+      "name": "MFASweep",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "dafthack/MFASweep"
+        }
+      ]
+    },
+    {
+      "name": "PetitPotam",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "topotam/PetitPotam"
+        }
+      ]
+    },
+    {
+      "name": "PowerMad",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "Kevin-Robertson/Powermad"
+        }
+      ]
+    },
+    {
+      "name": "PowerUpSQL",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "NetSPI/PowerUpSQL"
+        }
+      ]
+    },
+    {
+      "name": "PSPKIAudit",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "GhostPack/PSPKIAudit"
+        }
+      ]
+    },
+    {
+      "name": "RustHound-CE",
+      "category": "rust",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "rust",
+          "repo": "g0h4n/RustHound-CE",
+          "target": "x86_64-pc-windows-gnu"
+        }
+      ]
+    },
+    {
+      "name": "rustyneedle",
+      "category": "rust",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "rust",
+          "repo": "mttaggart/rustyneedle",
+          "target": "x86_64-pc-windows-gnu"
+        }
+      ]
+    },
+    {
+      "name": "Stracciatella",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "mgeeky/Stracciatella"
+        }
+      ]
+    },
+    {
+      "name": "SuperMega",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "dobin/SuperMega",
+          "pipRequirements": true
+        }
+      ]
+    },
+    {
+      "name": "upx",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "cmake",
+          "repo": "upx/upx",
+          "generator": "Visual Studio 17 2022",
+          "architecture": "x64",
+          "subModule": true
+        }
+      ]
+    },
+    {
+      "name": "ShieldBreak",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "https://git.churchofmalware.org/Nightmare_Eclipse/ShieldBreak.git",
+          "destRoot": "NightmareEclipse"
+        }
+      ]
+    },
+    {
+      "name": "GreatXML",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "https://git.churchofmalware.org/Nightmare_Eclipse/GreatXML.git",
+          "destRoot": "NightmareEclipse"
+        }
+      ]
+    },
+    {
+      "name": "GreenPlasma",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "https://git.churchofmalware.org/Nightmare_Eclipse/GreenPlasma.git",
+          "destRoot": "NightmareEclipse"
+        }
+      ]
+    },
+    {
+      "name": "UnDefend",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "https://git.churchofmalware.org/Nightmare_Eclipse/UnDefend.git",
+          "destRoot": "NightmareEclipse"
+        }
+      ]
+    },
+    {
+      "name": "BlueHammer",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "https://git.churchofmalware.org/Nightmare_Eclipse/BlueHammer.git",
+          "destRoot": "NightmareEclipse"
+        }
+      ]
+    },
+    {
+      "name": "YellowKey",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "https://git.churchofmalware.org/Nightmare_Eclipse/YellowKey.git",
+          "destRoot": "NightmareEclipse"
+        }
+      ]
+    },
+    {
+      "name": "MiniPlasma",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "https://git.churchofmalware.org/Nightmare_Eclipse/MiniPlasma.git",
+          "destRoot": "NightmareEclipse"
+        }
+      ]
+    },
+    {
+      "name": "RedSun",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "https://git.churchofmalware.org/Nightmare_Eclipse/RedSun.git",
+          "destRoot": "NightmareEclipse"
+        }
+      ]
+    },
+    {
+      "name": "RegPwn",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "native",
+          "repo": "mdsecactivebreach/RegPwn",
+          "slnPath": "RegPwn\\RegPwn.sln",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "RegPwnBOF",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "Flangvik/RegPwnBOF",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "eicar.com",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "remoteFile",
+          "url": "https://secure.eicar.org/eicar_com.zip",
+          "destination": "{ToolsRoot}\\eicar_com.zip"
+        }
+      ]
+    },
+    {
+      "name": "eicar.txt",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "remoteFile",
+          "url": "https://secure.eicar.org/eicar.com.txt",
+          "destination": "{ToolsRoot}\\eicar_com.txt"
+        }
+      ]
+    },
+    {
+      "name": "eicar.com2",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "remoteFile",
+          "url": "https://secure.eicar.org/eicar_com2.zip",
+          "destination": "{ToolsRoot}\\eicar_com-2.zip"
+        }
+      ]
+    },
+    {
+      "name": "UACME",
+      "category": "native",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "multi",
+          "steps": [
+            {
+              "type": "native",
+              "repo": "hfiref0x/UACME",
+              "slnPath": "Source\\Akagi\\uacme.vcxproj"
+            },
+            {
+              "type": "native",
+              "repo": "hfiref0x/UACME",
+              "slnPath": "Source\\Akatsuki\\Akatsuki.vcxproj"
+            },
+            {
+              "type": "native",
+              "repo": "hfiref0x/UACME",
+              "slnPath": "Source\\Fubuki\\dll.vcxproj"
+            },
+            {
+              "type": "native",
+              "repo": "hfiref0x/UACME",
+              "slnPath": "Source\\Naka\\Naka.vcxproj"
+            },
+            {
+              "type": "native",
+              "repo": "hfiref0x/UACME",
+              "slnPath": "Source\\Yuubari\\Yuubari.vcxproj"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Codeception",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "sadreck/Codecepticon",
+          "destRoot": "SharpTools"
+        }
+      ]
+    }
+  ]
+}

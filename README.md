@@ -1,11 +1,28 @@
 # RedWindows
-Customized Windows 10 for Red Teams.
+Customized Windows 10 for Red Teams — a winget-first Commando VM-style setup.
 
-> Currently a hot mess and will clean it up later, but it works!
+`RedWindows.ps1` is a thin staged orchestrator; install logic lives under `lib/`.
+The package list is declarative in `packages.json` at the repo root (loaded by `lib/Packages.ps1`).
+
 ## To run
-```powershell
-iwr "https://raw.githubusercontent.com/orthrus1775/RedWindows/refs/heads/main/RedWindows.ps1" -OutFile "$env:USERPROFILE\Desktop\RedWindows.ps1"; & "$env:USERPROFILE\Desktop\RedWindows.ps1"
 
+Run elevated. Fresh Windows boxes usually don't have Git yet — that's fine; the script installs winget → Git later. Bootstrap by downloading the **full repo ZIP** (needs `RedWindows.ps1`, `lib/`, and `packages.json`), not a single-file `iwr` of the `.ps1` alone:
+
+```powershell
+$zip = "$env:TEMP\RedWindows.zip"; $dest = "$env:USERPROFILE\Desktop\RedWindows"
+iwr "https://github.com/orthrus1775/RedWindows/archive/refs/heads/main.zip" -OutFile $zip
+Expand-Archive $zip $env:TEMP -Force
+if (Test-Path $dest) { Remove-Item $dest -Recurse -Force }
+Move-Item "$env:TEMP\RedWindows-main" $dest
+& "$dest\RedWindows.ps1"
+```
+
+If Git is already available:
+
+```powershell
+git clone https://github.com/orthrus1775/RedWindows.git
+cd RedWindows
+.\RedWindows.ps1
 ```
 
 
