@@ -152,8 +152,8 @@ function Clear-EventLogs {
 function Optimize-VmDisk {
     $vmwareToolboxCmd = 'C:\Program Files\VMware\VMware Tools\VMwareToolboxCmd.exe'
 
-    # Use C: not C:\ — Toolbox treats the trailing slash as a bad partition name.
-    Write-Status "[-] [Disk shrink] running VMwareToolboxCmd disk shrink C:" 'Cyan'
+    # VMware Tools expects C:\ (C: alone fails with "Unable to find partition C:").
+    Write-Status "[-] [Disk shrink] running VMwareToolboxCmd disk shrink C:\" 'Cyan'
     try {
         if (-not (Test-Path $vmwareToolboxCmd)) {
             Write-Status "[!] [Disk shrink] VMware Tools not found - skipping" 'Yellow'
@@ -162,7 +162,7 @@ function Optimize-VmDisk {
         }
 
         # Capture stderr via Invoke-NativeQuiet so EAP Stop doesn't abort before LASTEXITCODE.
-        $raw = Invoke-NativeQuiet { & $vmwareToolboxCmd disk shrink C: 2>&1 }
+        $raw = Invoke-NativeQuiet { & $vmwareToolboxCmd disk shrink 'C:\' 2>&1 }
         $output = ($raw | ForEach-Object { "$_" }) -join ' '
         $output = ($output -replace '\s+', ' ').Trim()
         $exitCode = $LASTEXITCODE
@@ -170,7 +170,7 @@ function Optimize-VmDisk {
         if ($exitCode -eq 0) {
             if ($output) { Write-Status $output 'DarkGray' }
             Write-Status "[+] [Disk shrink] completed" 'Green'
-            Add-Result -Name 'Disk shrink' -Status Installed -Detail 'VMwareToolboxCmd disk shrink C:'
+            Add-Result -Name 'Disk shrink' -Status Installed -Detail 'VMwareToolboxCmd disk shrink C:\'
             return $true
         }
 
