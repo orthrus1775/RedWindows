@@ -6,6 +6,7 @@ function Install-WingetPackage {
 
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         Write-Status "[!] [$Name] winget is not on PATH - skipping" 'Yellow'
+        Add-Result -Name $Name -Status Failed -Detail 'winget not on PATH'
         return $false
     }
 
@@ -27,5 +28,6 @@ function Install-WingetPackage {
     }
 
     Write-Status "[!] [$Name] winget install failed (exit $LASTEXITCODE)" 'Yellow'
+    Add-Result -Name $Name -Status Failed -Detail "winget:$Id (exit $LASTEXITCODE)"
     return $false
 }

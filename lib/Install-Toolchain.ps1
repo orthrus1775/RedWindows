@@ -1,7 +1,13 @@
 function Install-ChooseNim {
     Update-SessionPath
+    if (Get-Command nim -ErrorAction SilentlyContinue) {
+        Write-Status "[+] [ChooseNim] Nim already installed" 'DarkGray'
+        Add-Result -Name 'ChooseNim' -Status Installed -Detail 'already present'
+        return $true
+    }
     if (-not (Get-Command choosenim -ErrorAction SilentlyContinue)) {
         Write-Status "[!] [ChooseNim] choosenim is not on PATH - install it via winget first" 'Yellow'
+        Add-Result -Name 'ChooseNim' -Status Failed -Detail 'choosenim not on PATH'
         return $false
     }
 
@@ -9,6 +15,7 @@ function Install-ChooseNim {
     Invoke-NativeQuiet { choosenim stable --firstInstall 2>$null | Out-Null }
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [ChooseNim] 'choosenim stable --firstInstall' failed (exit $LASTEXITCODE)" 'Yellow'
+        Add-Result -Name 'ChooseNim' -Status Failed -Detail "choosenim stable (exit $LASTEXITCODE)"
         return $false
     }
 
@@ -383,7 +390,7 @@ function Install-VulnConfig {
         Invoke-WebRequest -Uri $scriptUrl -OutFile $destFile -UseBasicParsing
     } catch {
         Write-Status "[!] [VulnConfig] download failed: $($_.Exception.Message)" 'Yellow'
-        Add-Result -Name 'VulnConfig' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name 'VulnConfig' -Status Failed -Detail $_.Exception.Message
         return $false
     }
 
@@ -392,7 +399,7 @@ function Install-VulnConfig {
     powershell.exe -ExecutionPolicy Bypass -NoProfile -File $destFile
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [VulnConfig] vuln-config.ps1 exited with code $LASTEXITCODE" 'Yellow'
-        Add-Result -Name 'VulnConfig' -Status Skipped -Detail "exit $LASTEXITCODE"
+        Add-Result -Name 'VulnConfig' -Status Failed -Detail "exit $LASTEXITCODE"
         return $false
     }
 

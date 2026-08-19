@@ -56,6 +56,11 @@ function Add-Result {
     }
     $script:Results.Add($entry)
 
+    # Stages 1-3 use this to decide retry-vs-advance in Complete-Stage.
+    if ($Status -eq 'Failed') {
+        $script:StageHadFailure = $true
+    }
+
     # Persist each result to CSV; in-memory list is per-stage only (reboots).
     if ($script:ResultsCsv) {
         try {

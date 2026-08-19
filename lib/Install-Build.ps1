@@ -979,8 +979,14 @@ function Install-PipPackage {
 function Install-Pipx {
     # Refresh PATH; package was just installed via winget in this process.
     Update-SessionPath
+    if (Get-Command pipx -ErrorAction SilentlyContinue) {
+        Write-Status "[+] [pipx] already installed" 'DarkGray'
+        Add-Result -Name 'pipx' -Status Installed -Detail 'already present'
+        return $true
+    }
     if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
         Write-Status "[!] [pipx] python is not on PATH - skipping" 'Yellow'
+        Add-Result -Name 'pipx' -Status Failed -Detail 'python not on PATH'
         return $false
     }
 
@@ -990,6 +996,7 @@ function Install-Pipx {
     Invoke-NativeQuiet { python -m pip install pipx *>$null }
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [pipx] pip install failed (exit $LASTEXITCODE)" 'Yellow'
+        Add-Result -Name 'pipx' -Status Failed -Detail "pip install pipx (exit $LASTEXITCODE)"
         return $false
     }
 

@@ -330,7 +330,7 @@ function New-AttackerUser {
         Add-Result -Name 'attacker user' -Status Installed -Detail 'local user + Administrators'
     } catch {
         Write-Status "[!] [attacker user] failed: $($_.Exception.Message)" 'Yellow'
-        Add-Result -Name 'attacker user' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name 'attacker user' -Status Failed -Detail $_.Exception.Message
     }
 }
 
@@ -364,7 +364,7 @@ function Set-AutoLogin {
     $autologonExe = Install-Autologon
     if (-not $autologonExe -or -not (Test-Path $autologonExe)) {
         Write-Status "[!] [Auto-login] Autologon64.exe unavailable - skipping" 'Yellow'
-        Add-Result -Name 'Auto-login' -Status Skipped -Detail 'Autologon64.exe unavailable'
+        Add-Result -Name 'Auto-login' -Status Failed -Detail 'Autologon64.exe unavailable'
         return
     }
 
@@ -374,7 +374,7 @@ function Set-AutoLogin {
         Add-Result -Name 'Auto-login' -Status Installed -Detail $script:AttackerUsername
     } catch {
         Write-Status "[!] [Auto-login] failed: $($_.Exception.Message)" 'Yellow'
-        Add-Result -Name 'Auto-login' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name 'Auto-login' -Status Failed -Detail $_.Exception.Message
     }
 }
 
@@ -427,6 +427,6 @@ function Install-Winget {
         }
     } catch {
         Write-Status "[!] [winget] install failed: $($_.Exception.Message)" 'Yellow'
-        Add-Result -Name 'winget' -Status Skipped -Detail $_.Exception.Message
+        Add-Result -Name 'winget' -Status Failed -Detail $_.Exception.Message
     }
 }

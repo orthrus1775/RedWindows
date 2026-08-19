@@ -126,10 +126,38 @@ function Complete-Installation {
     Restart-Computer -Force
 }
 
+function Restart-CurrentStage {
+    param(
+        [string]$Reason = 'one or more installs failed'
+    )
+
+    $stage = $script:CurrentStage
+    if ($stage -lt 1) { $stage = Get-RedWindowsStage }
+
+    $selfPath = Save-SelfCopy
+    Set-RedWindowsStage -Stage $stage
+    Register-ContinuationTask -ScriptPath $selfPath
+
+    Write-Status "`n=== Stage $stage incomplete ($Reason) - restarting to retry stage $stage ===" 'Yellow'
+    try { Stop-Transcript | Out-Null } catch {}
+    Wait-ForStageBreakpoint -Message "Stage $stage had failures; press Enter to restart and retry..."
+    Start-Sleep -Seconds 30
+    Restart-Computer -Force
+}
+
 function Complete-Stage {
     param(
         [int]$NextStage
     )
+
+    # Stages 1-3: any Failed install keeps this stage and reboots so the next
+    # run can detect already-installed packages and retry what is still missing.
+    if ($script:CurrentStage -ge 1 -and $script:CurrentStage -le 3 -and $script:StageHadFailure) {
+        $failed = @($script:Results | Where-Object { $_.Status -eq 'Failed' -and $_.Stage -eq $script:CurrentStage } | ForEach-Object { $_.Name })
+        $detail = if ($failed.Count) { $failed -join ', ' } else { 'install failure(s)' }
+        Restart-CurrentStage -Reason $detail
+        return
+    }
 
     $selfPath = Save-SelfCopy
     Set-RedWindowsStage -Stage $NextStage

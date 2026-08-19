@@ -14,7 +14,9 @@ add more entries to packages.json as needed.
 Run elevated from the repo root (RedWindows.ps1 + lib/). Save-SelfCopy
 persists the full install tree to C:\Tools\ across stage reboots.
 Packages that fail every available tier are skipped and logged in the
-summary rather than stopping the run.
+summary rather than stopping the run. Stages 1-3 are an exception: any
+Failed install keeps the current stage and reboots so the next pass can
+detect already-installed packages and retry what is still missing.
 #>
 
 #Requires -RunAsAdministrator
@@ -75,6 +77,7 @@ function Initialize-Environment {
     $script:ResultsCsv      = Join-Path $script:LogRoot 'RedWindows-results.csv'
     $script:Results         = New-Object System.Collections.Generic.List[object]
     $script:CurrentStage    = 0
+    $script:StageHadFailure = $false
 
     $allDirs = @(
         $script:ToolsRoot, $script:PayloadRoot, $script:DlRoot, $script:LogRoot,
@@ -102,53 +105,74 @@ function Initialize-Environment {
 
 function Invoke-Stage1 {
     $script:CurrentStage = 1
+    $script:StageHadFailure = $false
     Write-Status "`n=== Stage 1: attacker user, autologin, host prep, winget ===" 'Magenta'
 
-    New-AttackerUser
-    Set-AutoLogin
+    try {
+        New-AttackerUser
+        Set-AutoLogin
 
-    Disable-WindowsDefender
-    Disable-ScreenSaver
-    Show-FileExtensions
-    Disable-WindowsUpdates
-    Install-SshServer
-    Set-HighPerformancePowerPlan
-    New-RangeAdminUser
+        Disable-WindowsDefender
+        Disable-ScreenSaver
+        Show-FileExtensions
+        Disable-WindowsUpdates
+        Install-SshServer
+        Set-HighPerformancePowerPlan
+        New-RangeAdminUser
 
-    Install-Winget
+        Install-Winget
 
-    Complete-Stage -NextStage 2
+        Complete-Stage -NextStage 2
+    } catch {
+        Write-Status "[!] Stage 1 terminating error: $($_.Exception.Message)" 'Red'
+        Add-Result -Name 'Stage 1' -Status Failed -Detail $_.Exception.Message
+        Restart-CurrentStage -Reason $_.Exception.Message
+    }
 }
 
 function Invoke-Stage2 {
     $script:CurrentStage = 2
+    $script:StageHadFailure = $false
     Write-Status "`n=== Stage 2: install Git, Rust, ChooseNim ===" 'Magenta'
 
-    Disable-WindowsDefender
+    try {
+        Disable-WindowsDefender
 
-    # Git needs a fresh session for PATH; keep it out of Install-AllPackages.
-    $null = Install-WingetPackage 'Git'       'Git.Git'
-    $null = Install-WingetPackage 'Rust'      'Rustlang.Rustup'
-    $null = Install-WingetPackage 'ChooseNim' 'NimLang.ChooseNim'
-    $null = Install-WingetPackage 'Python 3.13' 'Python.Python.3.13'
-    Add-PythonFirewallRule
-    Complete-Stage -NextStage 3
+        # Git needs a fresh session for PATH; keep it out of Install-AllPackages.
+        $null = Install-WingetPackage 'Git'       'Git.Git'
+        $null = Install-WingetPackage 'Rust'      'Rustlang.Rustup'
+        $null = Install-WingetPackage 'ChooseNim' 'NimLang.ChooseNim'
+        $null = Install-WingetPackage 'Python 3.13' 'Python.Python.3.13'
+        Add-PythonFirewallRule
+        Complete-Stage -NextStage 3
+    } catch {
+        Write-Status "[!] Stage 2 terminating error: $($_.Exception.Message)" 'Red'
+        Add-Result -Name 'Stage 2' -Status Failed -Detail $_.Exception.Message
+        Restart-CurrentStage -Reason $_.Exception.Message
+    }
 }
 
 function Invoke-Stage3 {
     $script:CurrentStage = 3
+    $script:StageHadFailure = $false
     Write-Status "`n=== Stage 3: core dev environment (Nim, Python, Go, .NET SDK, VS2022) ===" 'Magenta'
 
-    Disable-WindowsDefender
-    Install-VulnConfig
-    Install-ChooseNim
-    $null = Install-WingetPackage 'Go' 'GoLang.Go'
-    $null = Install-WingetPackage '.NET SDK' 'Microsoft.DotNet.SDK.8'
-    $null = Install-WingetPackage 'NuGet' 'Microsoft.NuGet'
-    $null = Install-WingetPackage 'Visual Studio 2022 Community' 'Microsoft.VisualStudio.2022.Community'
-    Install-Pipx
+    try {
+        Disable-WindowsDefender
+        Install-VulnConfig
+        Install-ChooseNim
+        $null = Install-WingetPackage 'Go' 'GoLang.Go'
+        $null = Install-WingetPackage '.NET SDK' 'Microsoft.DotNet.SDK.8'
+        $null = Install-WingetPackage 'NuGet' 'Microsoft.NuGet'
+        $null = Install-WingetPackage 'Visual Studio 2022 Community' 'Microsoft.VisualStudio.2022.Community'
+        Install-Pipx
 
-    Complete-Stage -NextStage 4
+        Complete-Stage -NextStage 4
+    } catch {
+        Write-Status "[!] Stage 3 terminating error: $($_.Exception.Message)" 'Red'
+        Add-Result -Name 'Stage 3' -Status Failed -Detail $_.Exception.Message
+        Restart-CurrentStage -Reason $_.Exception.Message
+    }
 }
 
 function Invoke-Stage4 {
