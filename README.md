@@ -36,8 +36,17 @@ to install the toolset.
 ### Prerequisites
 
 - [Packer](https://www.packer.io/downloads) installed and on `PATH`.
-- VMware Workstation/Player installed (provides `vmrun.exe`, which the
-  `vmware-iso` builder needs).
+- VMware Workstation/Player + official Packer plugin
+  `github.com/vmware/vmware` **>= 2.1.5** (not the old `github.com/hashicorp/vmware`
+  source — that repo is gone / superseded).
+- Packer serves `windows.iso` from the Workstation install dir on **:8570**; FirstLogon
+  downloads/installs Tools, forces **Private** network, enables WinRM, reboots.
+  Do **not** attach the Tools ISO as a CD during Setup (`[/S]` dialog).
+  Override with `-var tools_iso_dir=...` if needed.
+
+  Packer’s `Starting virtual machine...` line often does **not** update until it
+  has guest IP + WinRM (can look hung). Check guest
+  `C:\Windows\Temp\packer-firstlogon.log` and host `$env:PACKER_LOG=1`.
 - A Windows 10 Pro ISO. If your ISO is a different edition, see the comments
   in `packer/http/autounattend.xml` for the image-name / product-key
   selection you'll need to change.

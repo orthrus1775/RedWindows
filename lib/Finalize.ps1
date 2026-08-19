@@ -152,26 +152,39 @@ function Clear-EventLogs {
 function Optimize-VmDisk {
     $vmwareToolboxCmd = 'C:\Program Files\VMware\VMware Tools\VMwareToolboxCmd.exe'
 
-    Write-Status "[-] [Disk shrink] running VMwareToolboxCmd disk shrink C:\" 'Cyan'
+    # Use C: not C:\ — Toolbox treats the trailing slash as a bad partition name.
+    Write-Status "[-] [Disk shrink] running VMwareToolboxCmd disk shrink C:" 'Cyan'
     try {
         if (-not (Test-Path $vmwareToolboxCmd)) {
-            Write-Status "[!] [Disk shrink] $vmwareToolboxCmd not found - is VMware Tools installed?" 'Yellow'
-            Add-Result -Name 'Disk shrink' -Status Skipped -Detail "$vmwareToolboxCmd not found"
+            Write-Status "[!] [Disk shrink] VMware Tools not found - skipping" 'Yellow'
+            Add-Result -Name 'Disk shrink' -Status Skipped -Detail 'VMwareToolboxCmd.exe not found'
             return $false
         }
 
         # Capture stderr via Invoke-NativeQuiet so EAP Stop doesn't abort before LASTEXITCODE.
-        $output = (Invoke-NativeQuiet { & $vmwareToolboxCmd disk shrink C:\ 2>&1 } | Out-String).Trim()
-        if ($output) { Write-Status $output 'DarkGray' }
-        if ($LASTEXITCODE -ne 0) {
-            Write-Status "[!] [Disk shrink] exited with code $LASTEXITCODE" 'Yellow'
-            Add-Result -Name 'Disk shrink' -Status Skipped -Detail "exit ${LASTEXITCODE}: $($output -replace '\s+', ' ')"
+        $raw = Invoke-NativeQuiet { & $vmwareToolboxCmd disk shrink C: 2>&1 }
+        $output = ($raw | ForEach-Object { "$_" }) -join ' '
+        $output = ($output -replace '\s+', ' ').Trim()
+        $exitCode = $LASTEXITCODE
+
+        if ($exitCode -eq 0) {
+            if ($output) { Write-Status $output 'DarkGray' }
+            Write-Status "[+] [Disk shrink] completed" 'Green'
+            Add-Result -Name 'Disk shrink' -Status Installed -Detail 'VMwareToolboxCmd disk shrink C:'
+            return $true
+        }
+
+        # Exit 72 / "disabled" is normal for linked clones, snapshots, thick/preallocated disks.
+        if ($exitCode -eq 72 -or $output -match 'Shrink disk is disabled|Shrinking is disabled') {
+            Write-Status "[!] [Disk shrink] disabled on this VM (linked clone, snapshot, or preallocated disk) - skipping" 'Yellow'
+            Add-Result -Name 'Disk shrink' -Status Skipped -Detail 'disabled by VMware (clone/snapshot/preallocated)'
             return $false
         }
 
-        Write-Status "[+] [Disk shrink] completed" 'Green'
-        Add-Result -Name 'Disk shrink' -Status Installed -Detail 'VMwareToolboxCmd disk shrink C:\'
-        return $true
+        Write-Status "[!] [Disk shrink] exited with code $exitCode - skipping" 'Yellow'
+        if ($output) { Write-Status $output 'DarkGray' }
+        Add-Result -Name 'Disk shrink' -Status Skipped -Detail "exit $exitCode"
+        return $false
     } catch {
         Write-Status "[!] [Disk shrink] failed: $($_.Exception.Message)" 'Yellow'
         Add-Result -Name 'Disk shrink' -Status Skipped -Detail $_.Exception.Message
