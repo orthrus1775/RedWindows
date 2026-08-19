@@ -1,0 +1,12 @@
+2026/08/18 23:14:18 [INFO] Packer version: 1.11.2 [go1.21.12 windows amd64]
+2026/08/18 23:14:18 [INFO] PACKER_CONFIG env var not set; checking the default config file path
+2026/08/18 23:14:18 [INFO] PACKER_CONFIG env var set; attempting to open config file: C:\Users\user0\AppData\Roaming\packer.config
+2026/08/18 23:14:18 [WARN] Config file doesn't exist: C:\Users\user0\AppData\Roaming\packer.config
+2026/08/18 23:14:18 [INFO] Setting cache directory: C:\Users\user0\Desktop\Projects\RedWindows\packer_cache
+e: cannot determine if process is in background: Process background check error: not implemented yet
+2026/08/18 23:14:18 ui error: Error: 
+
+CreateFile windows10.pkr.hcl: The system cannot find the file specified.
+
+2026/08/18 23:14:18 [INFO] (telemetry) Finalizing.
+2026/08/18 23:14:18 waiting for all plugin processes to complete...

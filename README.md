@@ -53,7 +53,7 @@ to install the toolset.
 
 ### Build
 
-1. Install the required plugin (one-time, from the `packer/` directory):
+1. Initialize packer:
    ```
    packer init windows10.pkr.hcl
    ```

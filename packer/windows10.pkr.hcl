@@ -91,6 +91,13 @@ source "vmware-iso" "windows10" {
 
   headless = var.headless
 
+  # Uploads the host's bundled VMware Tools windows.iso into the guest via the
+  # communicator once WinRM is up; a provisioner below mounts it and runs the
+  # silent installer. Requires VMware Workstation/Player to be installed on
+  # the build host (that's where the plugin sources the ISO from).
+  tools_upload_flavor = "windows"
+  tools_upload_path   = "C:/Windows/Temp/vmware-tools.iso"
+
   shutdown_command = "shutdown /s /t 10 /f /d p:4:1"
   shutdown_timeout = "15m"
 
@@ -111,6 +118,17 @@ build {
     inline = [
       "whoami",
       "systeminfo | findstr /B /C:\"OS Name\" /C:\"OS Version\""
+    ]
+  }
+
+  provisioner "file" {
+    source      = "${path.root}/scripts/install-vmware-tools.ps1"
+    destination = "C:/Windows/Temp/install-vmware-tools.ps1"
+  }
+
+  provisioner "windows-shell" {
+    inline = [
+      "powershell -ExecutionPolicy Bypass -File C:\\Windows\\Temp\\install-vmware-tools.ps1"
     ]
   }
 
