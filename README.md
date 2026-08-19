@@ -9,6 +9,7 @@ The package list is declarative in `packages.json` at the repo root (loaded by `
 Run elevated. Fresh Windows boxes usually don't have Git yet — that's fine; the script installs winget → Git later. Bootstrap by downloading the **full repo ZIP** (needs `RedWindows.ps1`, `lib/`, and `packages.json`), not a single-file `iwr` of the `.ps1` alone:
 
 ```powershell
+Set-ExecutionPolicy Bypass 
 $zip = "$env:TEMP\RedWindows.zip"; $dest = "$env:USERPROFILE\Desktop\RedWindows"
 iwr "https://github.com/orthrus1775/RedWindows/archive/refs/heads/main.zip" -OutFile $zip
 Expand-Archive $zip $env:TEMP -Force

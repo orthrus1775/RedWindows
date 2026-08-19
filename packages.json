@@ -11,6 +11,28 @@
         }
       ]
     },
+        {
+      "name": "mailsend-go",
+      "category": "recon",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "muquit.mailsend-go"
+        }
+      ]
+    },
+    {
+      "name": "thunderbird",
+      "category": "recon",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "Mozilla.Thunderbird"
+        }
+      ]
+    },
     {
       "name": "Wireshark",
       "category": "recon",

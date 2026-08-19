@@ -333,7 +333,11 @@ function Set-WindowsTerminalConfig {
         ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
         if ($hostsSrc) {
             $hostsDst = Join-Path $script:ToolsRoot 'Set-TerminalHosts.ps1'
-            Copy-Item -LiteralPath $hostsSrc -Destination $hostsDst -Force
+            # By later stages this script runs from C:\Tools itself, so hostsSrc
+            # and hostsDst can be the same file - Copy-Item rejects that.
+            if ([System.IO.Path]::GetFullPath($hostsSrc) -ne [System.IO.Path]::GetFullPath($hostsDst)) {
+                Copy-Item -LiteralPath $hostsSrc -Destination $hostsDst -Force
+            }
             Write-Status "[+] [Windows Terminal] helper -> $hostsDst" 'Green'
         }
 
