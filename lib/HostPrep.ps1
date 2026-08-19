@@ -406,7 +406,7 @@ function Install-Winget {
         }
     }
 
-    Write-Status "[-] [winget] not found, installing" 'Cyan'
+    Write-Status "[-] [winget] not found, installing latest DesktopAppInstaller" 'Cyan'
     try {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
         $ProgressPreference = 'SilentlyContinue'
@@ -414,8 +414,30 @@ function Install-Winget {
         Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force | Out-Null
         Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
         Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery | Out-Null
-        Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe
-        Repair-WinGetPackageManager -AllUsers
+
+        # Installs/upgrades to the current winget release (not the older inbox AppX).
+        try {
+            Repair-WinGetPackageManager -AllUsers -Force -Latest
+        } catch {
+            Repair-WinGetPackageManager -AllUsers -Latest
+        }
+
+        $verify = winget --version 2>$null
+        if ($verify) {
+            Write-Status "[+] [winget] installed ($verify)" 'Green'
+            Add-Result -Name 'winget' -Status Installed -Detail $verify
+            return
+        }
+
+        # Fallback: download the latest msixbundle from GitHub and sideload it.
+        Write-Status "[-] [winget] repair did not expose winget - downloading latest release" 'Yellow'
+        $release = Invoke-RestMethod -Uri 'https://api.github.com/repos/microsoft/winget-cli/releases/latest' -Headers @{ 'User-Agent' = 'RedWindows' }
+        $asset = $release.assets | Where-Object { $_.name -like '*.msixbundle' } | Select-Object -First 1
+        if (-not $asset) { throw 'No .msixbundle asset on latest winget-cli release' }
+
+        $bundlePath = Join-Path $script:DlRoot $asset.name
+        Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $bundlePath -UseBasicParsing
+        Add-AppxPackage -Path $bundlePath
 
         $verify = winget --version 2>$null
         if ($verify) {

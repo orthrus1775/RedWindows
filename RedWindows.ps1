@@ -206,6 +206,8 @@ function Invoke-Stage5 {
     Install-WindowsUpdates
     New-SshKeyPair
     Set-SshCopyIdFunction
+    Set-WindowsTerminalConfig
+    Set-TerminalHostsProfileFunction
     Set-Rebuild
     Clear-EventLogs
     Optimize-VmDisk

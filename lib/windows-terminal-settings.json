@@ -1,0 +1,253 @@
+{
+    "$help": "https://aka.ms/terminal-documentation",
+    "$schema": "https://aka.ms/terminal-profiles-schema",
+    "actions": [],
+    "copyFormatting": "none",
+    "copyOnSelect": false,
+    "defaultProfile": "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}",
+    "keybindings":
+    [
+        {
+            "id": "Terminal.CopyToClipboard",
+            "keys": "ctrl+c"
+        },
+        {
+            "id": "Terminal.PasteFromClipboard",
+            "keys": "ctrl+v"
+        },
+        {
+            "id": "Terminal.DuplicatePaneAuto",
+            "keys": "alt+shift+d"
+        }
+    ],
+    "newTabMenu":
+    [
+        {
+            "type": "remainingProfiles"
+        }
+    ],
+    "profiles":
+    {
+        "defaults": {},
+        "list":
+        [
+            {
+                "guid": "{0f80603c-52ed-5f3e-bfce-4d153e5025dd}",
+                "hidden": false,
+                "name": "Developer Command Prompt for VS 2022",
+                "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "commandline": "ssh -i __SSH_KEY__ attacker@<Team Server IP>",
+                "guid": "{f9fe7517-78e6-4e16-9ad8-a5da5c55fcf7}",
+                "hidden": false,
+                "icon": "__PICTURES__\\server.png",
+                "name": "Team Server",
+                "tabTitle": "Team Server"
+            },
+            {
+                "altGrAliasing": true,
+                "antialiasingMode": "grayscale",
+                "closeOnExit": "automatic",
+                "colorScheme": "Campbell",
+                "commandline": "ssh -i __SSH_KEY__ attacker@<RD1 IP>",
+                "cursorShape": "bar",
+                "elevate": false,
+                "font":
+                {
+                    "face": "Cascadia Mono",
+                    "size": 12
+                },
+                "guid": "{1ef26d6d-0463-4578-f285-a26a34e97bfb}",
+                "hidden": false,
+                "historySize": 9001,
+                "icon": "__PICTURES__\\bug.png",
+                "name": "RD1",
+                "padding": "8, 8, 8, 8",
+                "snapOnInput": true,
+                "startingDirectory": "%USERPROFILE%",
+                "useAcrylic": false
+            },
+            {
+                "altGrAliasing": true,
+                "antialiasingMode": "grayscale",
+                "closeOnExit": "automatic",
+                "colorScheme": "Campbell",
+                "commandline": "ssh -i __SSH_KEY__ attacker@<RD2 IP>",
+                "cursorShape": "bar",
+                "elevate": false,
+                "font":
+                {
+                    "face": "Cascadia Mono",
+                    "size": 12
+                },
+                "guid": "{1ef26d6d-0463-786a-a345-a26a34e97bfb}",
+                "hidden": false,
+                "historySize": 9001,
+                "icon": "__PICTURES__\\bug1.png",
+                "name": "RD2",
+                "padding": "8, 8, 8, 8",
+                "snapOnInput": true,
+                "startingDirectory": "%USERPROFILE%",
+                "useAcrylic": false
+            },
+            {
+                "altGrAliasing": true,
+                "antialiasingMode": "grayscale",
+                "closeOnExit": "automatic",
+                "colorScheme": "Campbell",
+                "commandline": "ssh -i __SSH_KEY__ attacker@<RD3 IP>",
+                "cursorShape": "bar",
+                "elevate": false,
+                "font":
+                {
+                    "face": "Cascadia Mono",
+                    "size": 12
+                },
+                "guid": "{1ef26d6d-0463-7b6a-b466-a26a34e97bfb}",
+                "hidden": false,
+                "historySize": 9001,
+                "icon": "__PICTURES__\\malware.png",
+                "name": "RD3",
+                "padding": "8, 8, 8, 8",
+                "snapOnInput": true,
+                "startingDirectory": "%USERPROFILE%",
+                "useAcrylic": false
+            },
+            {
+                "altGrAliasing": true,
+                "antialiasingMode": "grayscale",
+                "closeOnExit": "automatic",
+                "colorScheme": "Campbell",
+                "commandline": "ssh -i __SSH_KEY__ attacker@<Payload IP>",
+                "cursorShape": "bar",
+                "elevate": false,
+                "font":
+                {
+                    "face": "Cascadia Mono",
+                    "size": 12
+                },
+                "guid": "{1ef26d6d-0463-45b6-a285-a26a34e97bfb}",
+                "hidden": false,
+                "historySize": 9001,
+                "icon": "__PICTURES__\\skull.png",
+                "name": "Payload",
+                "padding": "8, 8, 8, 8",
+                "snapOnInput": true,
+                "startingDirectory": "%USERPROFILE%",
+                "useAcrylic": false
+            },
+            {
+                "altGrAliasing": true,
+                "antialiasingMode": "grayscale",
+                "closeOnExit": "automatic",
+                "colorScheme": "Campbell",
+                "commandline": "powershell.exe -NoExit -Command \"& 'C:\\Program Files\\Mozilla Firefox\\firefox.exe' https://domain_of_file_server.com\"",
+                "cursorShape": "bar",
+                "font":
+                {
+                    "face": "Cascadia Mono",
+                    "size": 12
+                },
+                "guid": "{9761a2e2-7948-44f9-a9a0-d56a1e49b8a6}",
+                "hidden": false,
+                "historySize": 9001,
+                "icon": "__PICTURES__\\folder.ico",
+                "name": "File Server",
+                "padding": "8, 8, 8, 8",
+                "snapOnInput": true,
+                "startingDirectory": "%USERPROFILE%",
+                "useAcrylic": false
+            },
+            {
+                "altGrAliasing": true,
+                "antialiasingMode": "grayscale",
+                "closeOnExit": "automatic",
+                "colorScheme": "Campbell",
+                "commandline": "powershell.exe -NoExit -Command \"& 'C:\\Program Files\\Mozilla Firefox\\firefox.exe' https://domain_of_file_exfil_server.com\"",
+                "cursorShape": "bar",
+                "font":
+                {
+                    "face": "Cascadia Mono",
+                    "size": 12
+                },
+                "guid": "{9761a2e2-7948-84f9-b9a0-d56c1e49b8a6}",
+                "hidden": false,
+                "historySize": 9001,
+                "icon": "__PICTURES__\\hack.png",
+                "name": "Exfil Server",
+                "padding": "8, 8, 8, 8",
+                "snapOnInput": true,
+                "startingDirectory": "%USERPROFILE%",
+                "useAcrylic": false
+            },
+            {
+                "altGrAliasing": true,
+                "antialiasingMode": "grayscale",
+                "closeOnExit": "automatic",
+                "colorScheme": "Campbell",
+                "commandline": "%SystemRoot%\\System32\\cmd.exe",
+                "cursorShape": "bar",
+                "elevate": true,
+                "font":
+                {
+                    "face": "Cascadia Mono",
+                    "size": 12
+                },
+                "guid": "{c06e383f-080a-427d-b2d3-3062541d054e}",
+                "hidden": false,
+                "historySize": 9001,
+                "icon": "ms-appx:///ProfileIcons/{0caa0dad-35be-5f56-a8ff-afceeeaa6101}.png",
+                "name": "Command Prompt Admin",
+                "padding": "8, 8, 8, 8",
+                "snapOnInput": true,
+                "startingDirectory": "%USERPROFILE%",
+                "useAcrylic": false
+            },
+            {
+                "commandline": "%SystemRoot%\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+                "guid": "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}",
+                "hidden": false,
+                "name": "Windows PowerShell"
+            },
+            {
+                "commandline": "%SystemRoot%\\System32\\cmd.exe",
+                "guid": "{0caa0dad-35be-5f56-a8ff-afceeeaa6101}",
+                "hidden": false,
+                "name": "Command Prompt"
+            },
+            {
+                "guid": "{b453ae62-4e3d-5e58-b989-0a998ec441b8}",
+                "hidden": false,
+                "name": "Azure Cloud Shell",
+                "source": "Windows.Terminal.Azure"
+            },
+            {
+                "guid": "{17d6308c-83d5-5fae-a03d-ca5575beea04}",
+                "hidden": false,
+                "name": "Developer Command Prompt for VS 2022",
+                "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "guid": "{dd3fd442-d07b-5b29-987a-0708d6d9b6a6}",
+                "hidden": false,
+                "name": "Developer PowerShell for VS 2022",
+                "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "guid": "{269537c2-5f02-53fe-aadf-77b13d074de3}",
+                "hidden": true,
+                "name": "Developer Command Prompt for VS 2017",
+                "source": "Windows.Terminal.VisualStudio"
+            },
+            {
+                "guid": "{2ece5bfe-50ed-5f3a-ab87-5cd4baafed2b}",
+                "hidden": false,
+                "name": "Git Bash",
+                "source": "Git"
+            }
+        ]
+    },
+    "schemes": [],
+    "themes": []
+}

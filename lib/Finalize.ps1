@@ -90,6 +90,83 @@ function ssh-copy-id {
     }
 }
 
+function Set-TerminalHostsProfileFunction {
+    Write-Status "[-] [Set-TerminalHosts] adding function to PowerShell profile" 'Cyan'
+    try {
+        $scriptPath = Join-Path $script:ToolsRoot 'Set-TerminalHosts.ps1'
+        if (-not (Test-Path -LiteralPath $scriptPath)) {
+            throw "$scriptPath not found - run Set-WindowsTerminalConfig first"
+        }
+
+        $funcDef = @"
+
+# BEGIN RedWindows Set-TerminalHosts
+function Set-TerminalHosts {
+    [CmdletBinding()]
+    param(
+        [string]`$TeamServer,
+        [string]`$RD1,
+        [string]`$RD2,
+        [string]`$RD3,
+        [string]`$Payload,
+        [string]`$FileServer,
+        [string]`$ExfilServer,
+        [switch]`$Interactive,
+        [Alias('h')][switch]`$Help
+    )
+    `$scriptPath = '$($scriptPath.Replace("'", "''"))'
+    if (-not (Test-Path -LiteralPath `$scriptPath)) {
+        Write-Host "Set-TerminalHosts: script not found: `$scriptPath" -ForegroundColor Yellow
+        return
+    }
+    & `$scriptPath @PSBoundParameters
+}
+# END RedWindows Set-TerminalHosts
+"@
+
+        $profilePaths = @(
+            (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
+            (Join-Path $env:USERPROFILE 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1'),
+            (Join-Path "C:\Users\$($script:AttackerUsername)" 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
+            (Join-Path "C:\Users\$($script:AttackerUsername)" 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1')
+        ) | Select-Object -Unique
+
+        $updated = 0
+        foreach ($profilePath in $profilePaths) {
+            $profileDir = Split-Path -Path $profilePath -Parent
+            if (-not (Test-Path -LiteralPath $profileDir)) {
+                New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+            }
+
+            if (Test-Path -LiteralPath $profilePath) {
+                $existing = Get-Content -LiteralPath $profilePath -Raw
+                if ($existing -match '(?s)# BEGIN RedWindows Set-TerminalHosts.*?# END RedWindows Set-TerminalHosts') {
+                    $existing = [regex]::Replace($existing, '(?s)# BEGIN RedWindows Set-TerminalHosts.*?# END RedWindows Set-TerminalHosts\r?\n?', '')
+                    Set-Content -LiteralPath $profilePath -Value $existing.TrimEnd() -Encoding UTF8
+                } elseif ($existing -match '(?m)^function Set-TerminalHosts\b') {
+                    # Older wrapper without markers - leave it and append the new marked block.
+                }
+            }
+
+            Add-Content -LiteralPath $profilePath -Value $funcDef -Encoding UTF8
+            $updated++
+        }
+
+        if ($updated -eq 0) {
+            Write-Status "[+] [Set-TerminalHosts] already present in profile(s)" 'DarkGray'
+            Add-Result -Name 'Set-TerminalHosts function' -Status Installed -Detail 'already present'
+        } else {
+            Write-Status "[+] [Set-TerminalHosts] added to $updated profile(s) - run Set-TerminalHosts in a new shell" 'Green'
+            Add-Result -Name 'Set-TerminalHosts function' -Status Installed -Detail "$updated profile(s)"
+        }
+        return $true
+    } catch {
+        Write-Status "[!] [Set-TerminalHosts] profile update failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Set-TerminalHosts function' -Status Skipped -Detail $_.Exception.Message
+        return $false
+    }
+}
+
 function Set-Rebuild {
     $sourcePath  = Join-Path $script:ToolsRoot 'RedWindows.ps1'
     $rebuildPath = Join-Path $script:ToolsRoot 'Rebuild.ps1'
@@ -188,6 +265,83 @@ function Optimize-VmDisk {
     } catch {
         Write-Status "[!] [Disk shrink] failed: $($_.Exception.Message)" 'Yellow'
         Add-Result -Name 'Disk shrink' -Status Skipped -Detail $_.Exception.Message
+        return $false
+    }
+}
+
+function Set-WindowsTerminalConfig {
+    Write-Status "[-] [Windows Terminal] copying icons and writing settings.json" 'Cyan'
+    try {
+        $attackerHome = Join-Path 'C:\Users' $script:AttackerUsername
+        $picturesDir  = Join-Path $attackerHome 'Pictures'
+        $sshKeyPath   = Join-Path $attackerHome '.ssh\id_ed25519'
+        $appDataLocal = Join-Path $attackerHome 'AppData\Local'
+
+        $iconsSrc = @(
+            (Join-Path $script:RedWindowsRoot 'lib\icons'),
+            (Join-Path $script:ToolsRoot 'lib\icons')
+        ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+
+        $templatePath = @(
+            (Join-Path $script:RedWindowsRoot 'lib\windows-terminal-settings.json'),
+            (Join-Path $script:ToolsRoot 'lib\windows-terminal-settings.json')
+        ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+
+        if (-not $iconsSrc) {
+            throw 'lib\icons not found under RedWindowsRoot or ToolsRoot'
+        }
+        if (-not $templatePath) {
+            throw 'lib\windows-terminal-settings.json not found'
+        }
+
+        if (-not (Test-Path -LiteralPath $picturesDir)) {
+            New-Item -ItemType Directory -Path $picturesDir -Force | Out-Null
+        }
+        Copy-Item -Path (Join-Path $iconsSrc '*') -Destination $picturesDir -Force
+        Write-Status "[+] [Windows Terminal] icons -> $picturesDir" 'Green'
+
+        $pkgRoot = Get-ChildItem -Path (Join-Path $appDataLocal 'Packages') -Directory -Filter 'Microsoft.WindowsTerminal_*' -ErrorAction SilentlyContinue |
+            Sort-Object Name |
+            Select-Object -First 1
+
+        if (-not $pkgRoot) {
+            # Terminal may not have been launched yet; create the usual package folder name.
+            $pkgRootPath = Join-Path $appDataLocal 'Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe'
+            New-Item -ItemType Directory -Path (Join-Path $pkgRootPath 'LocalState') -Force | Out-Null
+            $pkgRoot = Get-Item -LiteralPath $pkgRootPath
+            Write-Status "[!] [Windows Terminal] package folder not found - created $pkgRootPath" 'Yellow'
+        }
+
+        $localState = Join-Path $pkgRoot.FullName 'LocalState'
+        if (-not (Test-Path -LiteralPath $localState)) {
+            New-Item -ItemType Directory -Path $localState -Force | Out-Null
+        }
+
+        # JSON needs escaped backslashes in string values.
+        $sshKeyJson   = $sshKeyPath.Replace('\', '\\')
+        $picturesJson = $picturesDir.Replace('\', '\\')
+        $json = Get-Content -LiteralPath $templatePath -Raw -Encoding UTF8
+        $json = $json.Replace('__SSH_KEY__', $sshKeyJson).Replace('__PICTURES__', $picturesJson)
+
+        $settingsPath = Join-Path $localState 'settings.json'
+        Set-Content -LiteralPath $settingsPath -Value $json -Encoding UTF8 -Force
+        Write-Status "[+] [Windows Terminal] wrote $settingsPath" 'Green'
+
+        $hostsSrc = @(
+            (Join-Path $script:RedWindowsRoot 'Set-TerminalHosts.ps1'),
+            (Join-Path $script:ToolsRoot 'Set-TerminalHosts.ps1')
+        ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        if ($hostsSrc) {
+            $hostsDst = Join-Path $script:ToolsRoot 'Set-TerminalHosts.ps1'
+            Copy-Item -LiteralPath $hostsSrc -Destination $hostsDst -Force
+            Write-Status "[+] [Windows Terminal] helper -> $hostsDst" 'Green'
+        }
+
+        Add-Result -Name 'Windows Terminal' -Status Installed -Detail $settingsPath
+        return $true
+    } catch {
+        Write-Status "[!] [Windows Terminal] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Windows Terminal' -Status Skipped -Detail $_.Exception.Message
         return $false
     }
 }

@@ -19,6 +19,7 @@ function Save-SelfCopy {
     $persistentScript = Join-Path $script:ToolsRoot 'RedWindows.ps1'
     $persistentLib = Join-Path $script:ToolsRoot 'lib'
     $persistentPackages = Join-Path $script:ToolsRoot 'packages.json'
+    $persistentTerminalHosts = Join-Path $script:ToolsRoot 'Set-TerminalHosts.ps1'
 
     # Use RedWindowsRoot (set when the entry script loaded), not $PSCommandPath —
     # inside dotsourced lib\*.ps1, $PSCommandPath can point at lib\Staging.ps1 and
@@ -31,6 +32,7 @@ function Save-SelfCopy {
     $scriptSource = Join-Path $repoRoot 'RedWindows.ps1'
     $libSource = Join-Path $repoRoot 'lib'
     $packagesSource = Join-Path $repoRoot 'packages.json'
+    $terminalHostsSource = Join-Path $repoRoot 'Set-TerminalHosts.ps1'
 
     # Already running from C:\Tools (post-reboot stages): source == destination.
     # Do not Remove-Item lib and then Copy-Item onto itself — that deletes the tree.
@@ -64,7 +66,11 @@ function Save-SelfCopy {
     }
     Copy-Item -Path $packagesSource -Destination $persistentPackages -Force
 
-    Write-Status "[+] [Self-copy] $persistentScript + lib\ + packages.json" 'Green'
+    if (Test-Path -LiteralPath $terminalHostsSource) {
+        Copy-Item -Path $terminalHostsSource -Destination $persistentTerminalHosts -Force
+    }
+
+    Write-Status "[+] [Self-copy] $persistentScript + lib\ + packages.json (+ Set-TerminalHosts.ps1)" 'Green'
     return $persistentScript
 }
 
