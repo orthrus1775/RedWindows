@@ -30,7 +30,7 @@ Write-Host "[RedWindows] starting from $PSCommandPath" -ForegroundColor Cyan
 # =============================================================================
 
 # TEMPORARY: pause for Enter before each stage reboot. Set $false for unattended runs.
-$script:EnableStageBreakpoints = $true
+$script:EnableStageBreakpoints = $false
 
 $script:AttackerUsername    = 'attacker'
 $script:AttackerPassword    = 'GoCyber2026!!'
