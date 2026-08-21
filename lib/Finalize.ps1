@@ -43,9 +43,11 @@ function Install-VaultEncFile {
     }
 
     $sources = @(
-        (Join-Path $script:RedWindowsRoot 'vault.enc'),
-        (Join-Path $script:ToolsRoot 'vault.enc')
-    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+        @(
+            (Join-Path $script:RedWindowsRoot 'vault.enc'),
+            (Join-Path $script:ToolsRoot 'vault.enc')
+        ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+    )
 
     $missing = @($destPaths | Where-Object { -not (Test-Path -LiteralPath $_) })
     if ($missing.Count -eq 0) {
@@ -53,12 +55,12 @@ function Install-VaultEncFile {
         return
     }
 
-    if (-not $sources -or $sources.Count -eq 0) {
+    if ($sources.Count -eq 0) {
         Write-Status "[!] [vault.enc] not in repo/Tools yet; place vault.enc at $($missing -join ' or ') before Controller install" 'Yellow'
         return
     }
 
-    $source = $sources[0]
+    $source = $sources | Select-Object -First 1
     foreach ($dest in $missing) {
         $destDir = Split-Path -Parent $dest
         if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {

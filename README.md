@@ -73,7 +73,7 @@ to install the toolset.
    ```
 3. Build:
    ```
-   packer build -var-file=local.pkrvars.hcl windows10.pkr.hcl
+   packer build -var-file='local.pkrvars.hcl' windows10.pkr.hcl
    ```
 
 The unattended install creates a local admin account (`attacker` /
