@@ -237,6 +237,164 @@ function Unprotect-VaultEnc {
     }
 }
 
+function Invoke-ControllerUserBuild {
+    param(
+        [Parameter(Mandatory)]
+        [string]$CloneDir
+    )
+
+    # PyInstaller refuses admin in v7+; run pip + pyinstaller as attacker (Limited).
+    $taskName   = 'RedWindowsControllerBuild'
+    $buildScript = Join-Path $CloneDir '_build-controller.ps1'
+    $statusFile  = Join-Path $CloneDir '_build-status.txt'
+    $logFile     = Join-Path $CloneDir '_build-log.txt'
+
+    Remove-Item -LiteralPath $statusFile, $logFile -Force -ErrorAction SilentlyContinue
+
+    $buildScriptContent = @'
+$ErrorActionPreference = "Stop"
+$cloneDir   = $PSScriptRoot
+$statusFile = Join-Path $cloneDir "_build-status.txt"
+$logFile    = Join-Path $cloneDir "_build-log.txt"
+$exitCode   = 1
+
+function Write-BuildLog([string]$Message) {
+    $line = "[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $Message
+    Add-Content -LiteralPath $logFile -Value $line
+    Write-Host $line
+}
+
+try {
+    Set-Location -LiteralPath $cloneDir
+    $machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+    $userPath    = [Environment]::GetEnvironmentVariable("Path", "User")
+    $env:Path    = @($machinePath, $userPath) -join ";"
+
+    $pythonCmd = $null
+    foreach ($name in @("python", "py")) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if ($cmd) { $pythonCmd = $cmd.Source; break }
+    }
+    if (-not $pythonCmd) { throw "python/py not on PATH for non-admin build" }
+
+    $reqFile = Join-Path $cloneDir "requirements.txt"
+    if (-not (Test-Path -LiteralPath $reqFile)) { throw "requirements.txt not found" }
+
+    Write-BuildLog "pip install -r requirements.txt ($pythonCmd)"
+    & $pythonCmd -m pip install -r $reqFile *>> $logFile
+    if ($LASTEXITCODE -ne 0) { throw "pip install failed (exit $LASTEXITCODE)" }
+
+    $iconArgs = @()
+    if (Test-Path -LiteralPath (Join-Path $cloneDir "controller.ico")) {
+        $iconArgs = @("--icon=controller.ico")
+    }
+
+    Write-BuildLog "pyinstaller build"
+    $pyiArgs = @(
+        "-m", "PyInstaller",
+        "--onefile", "--console", "--name", "controller"
+    ) + $iconArgs + @(
+        "--hidden-import=gatekeeper",
+        "--hidden-import=browserconf",
+        "--hidden-import=browsergen",
+        "--hidden-import=emailconf",
+        "--hidden-import=excelgen",
+        "--hidden-import=fileops",
+        "--hidden-import=keymaster",
+        "--hidden-import=outlookgen",
+        "--hidden-import=pdfgen",
+        "--hidden-import=pptgen",
+        "--hidden-import=rdpgen",
+        "--hidden-import=scriptgen",
+        "--hidden-import=sshgen",
+        "--hidden-import=taskmaster",
+        "--hidden-import=textgen",
+        "--hidden-import=thunderbirdgen",
+        "--hidden-import=webgen",
+        "--hidden-import=wmigen",
+        "--hidden-import=wordgen",
+        "--hidden-import=zipgen",
+        "--hidden-import=webdrivers",
+        "--collect-all=selenium",
+        "--collect-all=selenium_stealth",
+        "--collect-all=webdriver_manager",
+        "--hidden-import=selenium",
+        "--hidden-import=selenium.webdriver",
+        "--hidden-import=selenium.webdriver.chrome",
+        "--hidden-import=selenium.webdriver.chrome.webdriver",
+        "--hidden-import=selenium.webdriver.chrome.options",
+        "--hidden-import=selenium.webdriver.chrome.service",
+        "--hidden-import=selenium.webdriver.common.by",
+        "--hidden-import=selenium.webdriver.common.keys",
+        "--hidden-import=selenium.webdriver.remote.webdriver",
+        "--hidden-import=selenium_stealth",
+        "--hidden-import=webdriver_manager",
+        "--hidden-import=webdriver_manager.chrome",
+        "--additional-hooks-dir=.",
+        "main.py"
+    )
+    & $pythonCmd @pyiArgs *>> $logFile
+    if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed (exit $LASTEXITCODE)" }
+
+    $exe = Join-Path $cloneDir "dist\controller.exe"
+    if (-not (Test-Path -LiteralPath $exe)) { throw "build finished but dist\controller.exe is missing" }
+
+    $exitCode = 0
+    Write-BuildLog "build ok"
+} catch {
+    Write-BuildLog ("ERROR: " + $_.Exception.Message)
+    $exitCode = 1
+} finally {
+    Set-Content -LiteralPath $statusFile -Value $exitCode -Encoding ascii -Force
+}
+exit $exitCode
+'@
+    Set-Content -LiteralPath $buildScript -Value $buildScriptContent -Encoding UTF8 -Force
+
+    if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+    }
+
+    $arg = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$buildScript`""
+    $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg -WorkingDirectory $CloneDir
+    $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+    # Limited = non-admin token (PyInstaller 7+ blocks admin builds).
+    $principal = New-ScheduledTaskPrincipal -UserId $script:AttackerUsername -LogonType Password -RunLevel Limited
+
+    Write-Status "[-] [Controller] starting non-admin build task as $($script:AttackerUsername)" 'Cyan'
+    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings `
+        -Description 'RedWindows controller PyInstaller build (non-admin)' `
+        -Password $script:AttackerPassword | Out-Null
+
+    try {
+        Start-ScheduledTask -TaskName $taskName
+
+        $deadline = (Get-Date).AddHours(2)
+        while ((Get-Date) -lt $deadline) {
+            if (Test-Path -LiteralPath $statusFile) { break }
+            Start-Sleep -Seconds 5
+        }
+
+        if (-not (Test-Path -LiteralPath $statusFile)) {
+            throw "controller build task timed out (no status file at $statusFile)"
+        }
+
+        $buildExit = [int]((Get-Content -LiteralPath $statusFile -Raw).Trim())
+        if (Test-Path -LiteralPath $logFile) {
+            Get-Content -LiteralPath $logFile -Tail 40 | ForEach-Object { Write-Host $_ }
+        }
+        if ($buildExit -ne 0) {
+            throw "controller build task failed (exit $buildExit) - see $logFile"
+        }
+        Write-Status '[+] [Controller] non-admin pip + pyinstaller finished' 'Green'
+    } finally {
+        if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+            Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
+        }
+        Remove-Item -LiteralPath $buildScript -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Install-Controller {
     Write-Status "`n=== Controller (optional) ===" 'Magenta'
     $answer = Read-Host 'Install Controller? [y/N]'
@@ -258,11 +416,6 @@ function Install-Controller {
         if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
             throw 'git is not on PATH'
         }
-        if (-not (Get-Command python -ErrorAction SilentlyContinue) -and -not (Get-Command py -ErrorAction SilentlyContinue)) {
-            throw 'python is not on PATH'
-        }
-
-        $python = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'py' }
 
         if (Test-Path -LiteralPath $cloneDir) {
             Write-Status "[+] [Controller] $cloneDir already exists - updating" 'DarkGray'
@@ -284,7 +437,6 @@ function Install-Controller {
             }
         } else {
             Write-Status "[-] [Controller] cloning $repoUrl -> $cloneDir" 'Cyan'
-            # Username + PAT in URL for private HTTPS clone; never print the URL with token.
             $authUrl = "https://${ghUser}:${token}@github.com/orthrus1775/controller.git"
             try {
                 Invoke-NativeQuiet { git clone --depth 1 $authUrl $cloneDir 2>&1 | Out-Host }
@@ -294,7 +446,6 @@ function Install-Controller {
             } finally {
                 $authUrl = $null
             }
-            # Scrub credentials from remote URL after clone.
             Push-Location $cloneDir
             try {
                 Invoke-NativeQuiet { git remote set-url origin $repoUrl 2>&1 | Out-Null }
@@ -303,113 +454,73 @@ function Install-Controller {
             }
         }
 
-        Push-Location $cloneDir
-        try {
-            $reqFile = Join-Path $cloneDir 'requirements.txt'
-            if (-not (Test-Path -LiteralPath $reqFile)) {
-                throw 'requirements.txt not found in controller repo'
-            }
+        Invoke-ControllerUserBuild -CloneDir $cloneDir
 
-            Write-Status '[-] [Controller] pip install -r requirements.txt' 'Cyan'
-            Invoke-NativeQuiet { & $python -m pip install -r $reqFile 2>&1 | Out-Host }
-            if ($LASTEXITCODE -ne 0) {
-                throw "pip install failed (exit $LASTEXITCODE)"
-            }
+        Update-SessionPath
+        $python = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'py' }
 
-            $iconArgs = @()
-            if (Test-Path -LiteralPath (Join-Path $cloneDir 'controller.ico')) {
-                $iconArgs = @('--icon=controller.ico')
-            }
-
-            Write-Status '[-] [Controller] pyinstaller build' 'Cyan'
-            $pyiArgs = @(
-                '-m', 'PyInstaller',
-                '--onefile', '--console', '--name', 'controller'
-            ) + $iconArgs + @(
-                '--hidden-import=gatekeeper',
-                '--hidden-import=browserconf',
-                '--hidden-import=browsergen',
-                '--hidden-import=emailconf',
-                '--hidden-import=excelgen',
-                '--hidden-import=fileops',
-                '--hidden-import=keymaster',
-                '--hidden-import=outlookgen',
-                '--hidden-import=pdfgen',
-                '--hidden-import=pptgen',
-                '--hidden-import=rdpgen',
-                '--hidden-import=scriptgen',
-                '--hidden-import=sshgen',
-                '--hidden-import=taskmaster',
-                '--hidden-import=textgen',
-                '--hidden-import=thunderbirdgen',
-                '--hidden-import=webgen',
-                '--hidden-import=wmigen',
-                '--hidden-import=wordgen',
-                '--hidden-import=zipgen',
-                '--hidden-import=webdrivers',
-                # Selenium / stealth / webdriver-manager use dynamic imports PyInstaller misses.
-                '--collect-all=selenium',
-                '--collect-all=selenium_stealth',
-                '--collect-all=webdriver_manager',
-                '--hidden-import=selenium',
-                '--hidden-import=selenium.webdriver',
-                '--hidden-import=selenium.webdriver.chrome',
-                '--hidden-import=selenium.webdriver.chrome.webdriver',
-                '--hidden-import=selenium.webdriver.chrome.options',
-                '--hidden-import=selenium.webdriver.chrome.service',
-                '--hidden-import=selenium.webdriver.common.by',
-                '--hidden-import=selenium.webdriver.common.keys',
-                '--hidden-import=selenium.webdriver.remote.webdriver',
-                '--hidden-import=selenium_stealth',
-                '--hidden-import=webdriver_manager',
-                '--hidden-import=webdriver_manager.chrome',
-                '--additional-hooks-dir=.',
-                'main.py'
-            )
-            Invoke-NativeQuiet { & $python @pyiArgs 2>&1 | Out-Host }
-            if ($LASTEXITCODE -ne 0) {
-                throw "pyinstaller failed (exit $LASTEXITCODE)"
-            }
-
-            Write-Status '[-] [Controller] copying default.pptx template' 'Cyan'
-            $pptxSrc = & $python -c "import pptx, os; print(os.path.join(os.path.dirname(pptx.__file__), 'templates', 'default.pptx'))" 2>$null
-            if (-not $pptxSrc -or -not (Test-Path -LiteralPath $pptxSrc.Trim())) {
-                # Fallback to the common Python 3.12 layout the operator uses.
-                $pptxSrc = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\Lib\site-packages\pptx\templates\default.pptx'
-            } else {
-                $pptxSrc = $pptxSrc.Trim()
-            }
-            if (-not (Test-Path -LiteralPath $pptxSrc)) {
-                throw "default.pptx not found (looked via python pptx and $pptxSrc)"
-            }
-            Copy-Item -LiteralPath $pptxSrc -Destination (Join-Path $cloneDir 'default.pptx') -Force
-
-            $exe = Join-Path $cloneDir 'dist\controller.exe'
-            if (-not (Test-Path -LiteralPath $exe)) {
-                throw "build finished but $exe is missing"
-            }
-
-            $exeRoot = Join-Path $cloneDir 'controller.exe'
-            Copy-Item -LiteralPath $exe -Destination $exeRoot -Force
-            Write-Status "[+] [Controller] copied controller.exe -> $exeRoot" 'Green'
-
-            Write-Status '[-] [Controller] cleaning build tree (keeping dist, config, default.pptx, controller.exe)' 'Cyan'
-            $keep = @('dist', 'config', 'default.pptx', 'controller.exe')
-            Get-ChildItem -LiteralPath $cloneDir -Force | Where-Object {
-                $_.Name -notin $keep
-            } | ForEach-Object {
-                Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
-            }
-
-            if (-not (Test-Path -LiteralPath $exeRoot)) {
-                throw "cleanup finished but $exeRoot is missing"
-            }
-
-            Write-Status "[+] [Controller] ready at $exeRoot" 'Green'
-            Add-Result -Name 'Controller' -Status Installed -Detail $exeRoot
-        } finally {
-            Pop-Location
+        Write-Status '[-] [Controller] copying default.pptx template' 'Cyan'
+        $pptxSrc = & $python -c "import pptx, os; print(os.path.join(os.path.dirname(pptx.__file__), 'templates', 'default.pptx'))" 2>$null
+        if (-not $pptxSrc -or -not (Test-Path -LiteralPath $pptxSrc.Trim())) {
+            $pptxSrc = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\Lib\site-packages\pptx\templates\default.pptx'
+        } else {
+            $pptxSrc = $pptxSrc.Trim()
         }
+        # Prefer attacker's Python312 layout if current elevated session lacks pptx.
+        if (-not (Test-Path -LiteralPath $pptxSrc)) {
+            $pptxSrc = Join-Path "C:\Users\$($script:AttackerUsername)\AppData\Local\Programs\Python\Python312\Lib\site-packages\pptx\templates\default.pptx"
+        }
+        if (-not (Test-Path -LiteralPath $pptxSrc)) {
+            throw "default.pptx not found (looked via python pptx and attacker Python312 path)"
+        }
+        Copy-Item -LiteralPath $pptxSrc -Destination (Join-Path $cloneDir 'default.pptx') -Force
+
+        $exe = Join-Path $cloneDir 'dist\controller.exe'
+        if (-not (Test-Path -LiteralPath $exe)) {
+            throw "build finished but $exe is missing"
+        }
+
+        $exeRoot = Join-Path $cloneDir 'controller.exe'
+        Copy-Item -LiteralPath $exe -Destination $exeRoot -Force
+        Write-Status "[+] [Controller] copied controller.exe -> $exeRoot" 'Green'
+
+        Write-Status '[-] [Controller] cleaning build tree (keeping dist, config, default.pptx, controller.exe)' 'Cyan'
+        $keep = @('dist', 'config', 'default.pptx', 'controller.exe')
+        Get-ChildItem -LiteralPath $cloneDir -Force | Where-Object {
+            $_.Name -notin $keep
+        } | ForEach-Object {
+            Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
+        }
+
+        $configDir = Join-Path $cloneDir 'config'
+        if (Test-Path -LiteralPath $configDir) {
+            foreach ($name in @('config.json.bak', 'employee.json', 'employee.json.bak')) {
+                $path = Join-Path $configDir $name
+                if (Test-Path -LiteralPath $path) {
+                    Remove-Item -LiteralPath $path -Force -ErrorAction Stop
+                    Write-Status "[+] [Controller] removed config\$name" 'DarkGray'
+                }
+            }
+
+            $configJsonPath = Join-Path $configDir 'config.json'
+            if (Test-Path -LiteralPath $configJsonPath) {
+                Write-Status '[-] [Controller] updating config.json (DEBUG + weights)' 'Cyan'
+                $config = Get-Content -LiteralPath $configJsonPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                $config.DEBUG = $true
+                $config.weights = @(0, 0, 25, 25, 25, 25, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
+                $config | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $configJsonPath -Encoding UTF8 -Force
+                Write-Status "[+] [Controller] updated $configJsonPath" 'Green'
+            } else {
+                Write-Status '[!] [Controller] config\config.json not found - skip DEBUG/weights update' 'Yellow'
+            }
+        }
+
+        if (-not (Test-Path -LiteralPath $exeRoot)) {
+            throw "cleanup finished but $exeRoot is missing"
+        }
+
+        Write-Status "[+] [Controller] ready at $exeRoot" 'Green'
+        Add-Result -Name 'Controller' -Status Installed -Detail $exeRoot
     } catch {
         Write-Status "[!] [Controller] $($_.Exception.Message)" 'Yellow'
         Add-Result -Name 'Controller' -Status Skipped -Detail $_.Exception.Message

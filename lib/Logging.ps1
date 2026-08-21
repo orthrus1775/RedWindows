@@ -47,6 +47,14 @@ function Add-Result {
         [string]$Status,
         [string]$Detail = ''
     )
+
+    if ($null -eq $script:Results) {
+        $script:Results = New-Object System.Collections.Generic.List[object]
+    }
+    if ($null -eq $script:CurrentStage) {
+        $script:CurrentStage = 0
+    }
+
     $entry = [pscustomobject]@{
         Timestamp = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
         Stage     = $script:CurrentStage

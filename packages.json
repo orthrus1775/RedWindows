@@ -120,6 +120,17 @@
           "id": "Gitleaks.Gitleaks"
         }
       ]
+    },     
+        {
+      "name": "Liebreoffice",
+      "category": "core",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "winget",
+          "id": "TheDocumentFoundation.LibreOffice"
+        }
+      ]
     },
     {
       "name": "vscode",
