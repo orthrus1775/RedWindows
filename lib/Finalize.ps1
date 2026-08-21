@@ -346,6 +346,23 @@ function Install-Controller {
                 '--hidden-import=wmigen',
                 '--hidden-import=wordgen',
                 '--hidden-import=zipgen',
+                '--hidden-import=webdrivers',
+                # Selenium / stealth / webdriver-manager use dynamic imports PyInstaller misses.
+                '--collect-all=selenium',
+                '--collect-all=selenium_stealth',
+                '--collect-all=webdriver_manager',
+                '--hidden-import=selenium',
+                '--hidden-import=selenium.webdriver',
+                '--hidden-import=selenium.webdriver.chrome',
+                '--hidden-import=selenium.webdriver.chrome.webdriver',
+                '--hidden-import=selenium.webdriver.chrome.options',
+                '--hidden-import=selenium.webdriver.chrome.service',
+                '--hidden-import=selenium.webdriver.common.by',
+                '--hidden-import=selenium.webdriver.common.keys',
+                '--hidden-import=selenium.webdriver.remote.webdriver',
+                '--hidden-import=selenium_stealth',
+                '--hidden-import=webdriver_manager',
+                '--hidden-import=webdriver_manager.chrome',
                 '--additional-hooks-dir=.',
                 'main.py'
             )
@@ -367,8 +384,29 @@ function Install-Controller {
             }
             Copy-Item -LiteralPath $pptxSrc -Destination (Join-Path $cloneDir 'default.pptx') -Force
 
-            Write-Status "[+] [Controller] built under $cloneDir" 'Green'
-            Add-Result -Name 'Controller' -Status Installed -Detail $cloneDir
+            $exe = Join-Path $cloneDir 'dist\controller.exe'
+            if (-not (Test-Path -LiteralPath $exe)) {
+                throw "build finished but $exe is missing"
+            }
+
+            $exeRoot = Join-Path $cloneDir 'controller.exe'
+            Copy-Item -LiteralPath $exe -Destination $exeRoot -Force
+            Write-Status "[+] [Controller] copied controller.exe -> $exeRoot" 'Green'
+
+            Write-Status '[-] [Controller] cleaning build tree (keeping dist, config, default.pptx, controller.exe)' 'Cyan'
+            $keep = @('dist', 'config', 'default.pptx', 'controller.exe')
+            Get-ChildItem -LiteralPath $cloneDir -Force | Where-Object {
+                $_.Name -notin $keep
+            } | ForEach-Object {
+                Remove-Item -LiteralPath $_.FullName -Recurse -Force -ErrorAction Stop
+            }
+
+            if (-not (Test-Path -LiteralPath $exeRoot)) {
+                throw "cleanup finished but $exeRoot is missing"
+            }
+
+            Write-Status "[+] [Controller] ready at $exeRoot" 'Green'
+            Add-Result -Name 'Controller' -Status Installed -Detail $exeRoot
         } finally {
             Pop-Location
         }
