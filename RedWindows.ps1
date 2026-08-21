@@ -100,6 +100,7 @@ function Initialize-Environment {
     Write-Status "[+] Tools root: $script:ToolsRoot" 'Green'
     Write-Status "[+] Transcript: $script:TranscriptFile" 'Green'
     Write-Status "[+] Results log: $script:ResultsCsv" 'Green'
+    Install-VaultEncFile
     Enable-NumLock
 }
 
@@ -206,6 +207,7 @@ function Invoke-Stage5 {
     Install-WindowsUpdates
     New-SshKeyPair
     Set-SshCopyIdFunction
+    Set-VaultEncProfileFunction
     Set-WindowsTerminalConfig
     Set-TerminalHostsProfileFunction
     Set-Rebuild

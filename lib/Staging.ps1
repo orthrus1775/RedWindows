@@ -20,6 +20,7 @@ function Save-SelfCopy {
     $persistentLib = Join-Path $script:ToolsRoot 'lib'
     $persistentPackages = Join-Path $script:ToolsRoot 'packages.json'
     $persistentTerminalHosts = Join-Path $script:ToolsRoot 'Set-TerminalHosts.ps1'
+    $persistentVault = Join-Path $script:ToolsRoot 'vault.enc'
 
     # Use RedWindowsRoot (set when the entry script loaded), not $PSCommandPath —
     # inside dotsourced lib\*.ps1, $PSCommandPath can point at lib\Staging.ps1 and
@@ -33,6 +34,7 @@ function Save-SelfCopy {
     $libSource = Join-Path $repoRoot 'lib'
     $packagesSource = Join-Path $repoRoot 'packages.json'
     $terminalHostsSource = Join-Path $repoRoot 'Set-TerminalHosts.ps1'
+    $vaultSource = Join-Path $repoRoot 'vault.enc'
 
     # Already running from C:\Tools (post-reboot stages): source == destination.
     # Do not Remove-Item lib and then Copy-Item onto itself — that deletes the tree.
@@ -70,7 +72,11 @@ function Save-SelfCopy {
         Copy-Item -Path $terminalHostsSource -Destination $persistentTerminalHosts -Force
     }
 
-    Write-Status "[+] [Self-copy] $persistentScript + lib\ + packages.json (+ Set-TerminalHosts.ps1)" 'Green'
+    if (Test-Path -LiteralPath $vaultSource) {
+        Copy-Item -Path $vaultSource -Destination $persistentVault -Force
+    }
+
+    Write-Status "[+] [Self-copy] $persistentScript + lib\ + packages.json (+ Set-TerminalHosts.ps1 / vault.enc if present)" 'Green'
     return $persistentScript
 }
 
@@ -127,8 +133,9 @@ function Complete-Installation {
     Show-Summary
     Start-Sleep -Seconds 300
     Write-Status "`n=== Installation complete - final restart ===" 'Magenta'
+    Install-Controller
     Wait-ForStageBreakpoint
-    Start-Sleep -Seconds 300
+    Start-Sleep -Seconds 30
     Restart-Computer -Force
 }
 

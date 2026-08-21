@@ -30,6 +30,358 @@ function New-SshKeyPair {
     }
 }
 
+function Install-VaultEncFile {
+    # Prefer repo/Tools vault.enc; ensure ~/.vault.enc (and attacker home) for later decrypt.
+    $destPaths = @(
+        (Join-Path $env:USERPROFILE '.vault.enc')
+    )
+    if ($script:AttackerUsername) {
+        $attackerVault = Join-Path "C:\Users\$($script:AttackerUsername)" '.vault.enc'
+        if ($destPaths -notcontains $attackerVault) {
+            $destPaths += $attackerVault
+        }
+    }
+
+    $sources = @(
+        (Join-Path $script:RedWindowsRoot 'vault.enc'),
+        (Join-Path $script:ToolsRoot 'vault.enc')
+    ) | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -Unique
+
+    $missing = @($destPaths | Where-Object { -not (Test-Path -LiteralPath $_) })
+    if ($missing.Count -eq 0) {
+        Write-Status "[+] [vault.enc] already present at $($destPaths -join ', ')" 'DarkGray'
+        return
+    }
+
+    if (-not $sources -or $sources.Count -eq 0) {
+        Write-Status "[!] [vault.enc] not in repo/Tools yet; place vault.enc at $($missing -join ' or ') before Controller install" 'Yellow'
+        return
+    }
+
+    $source = $sources[0]
+    foreach ($dest in $missing) {
+        $destDir = Split-Path -Parent $dest
+        if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+        }
+        Copy-Item -LiteralPath $source -Destination $dest -Force
+        Write-Status "[+] [vault.enc] $source -> $dest" 'Green'
+    }
+
+    # Keep a copy under Tools for stage reboots / Save-SelfCopy consumers.
+    $toolsVault = Join-Path $script:ToolsRoot 'vault.enc'
+    if (-not (Test-Path -LiteralPath $toolsVault)) {
+        Copy-Item -LiteralPath $source -Destination $toolsVault -Force
+        Write-Status "[+] [vault.enc] cached at $toolsVault" 'Green'
+    }
+}
+
+function Protect-VaultEnc {
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$Path = (Join-Path $env:USERPROFILE '.vault.enc')
+    )
+
+    $passphrase = Read-Host "Passphrase" -AsSecureString
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($passphrase)
+    try {
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+
+    $salt = [byte[]](11, 22, 33, 44, 55, 66, 77, 88, 99, 10, 12, 13, 14, 15, 16, 17)
+    $kdf  = New-Object System.Security.Cryptography.Rfc2898DeriveBytes($plain, $salt, 100000)
+    $key  = $kdf.GetBytes(32)
+
+    Read-Host "GitHub PAT" -AsSecureString |
+        ConvertFrom-SecureString -Key $key |
+        Set-Content -Path $Path -Encoding ascii
+
+    Write-Host "Wrote encrypted vault to $Path" -ForegroundColor Green
+}
+
+function Unprotect-VaultEnc {
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$Path = (Join-Path $env:USERPROFILE '.vault.enc')
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Vault file not found: $Path"
+    }
+
+    $passphrase = Read-Host "Passphrase" -AsSecureString
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($passphrase)
+    try {
+        $plainPass = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+
+    $salt = [byte[]](11, 22, 33, 44, 55, 66, 77, 88, 99, 10, 12, 13, 14, 15, 16, 17)
+    $kdf  = New-Object System.Security.Cryptography.Rfc2898DeriveBytes($plainPass, $salt, 100000)
+    $key  = $kdf.GetBytes(32)
+    $enc  = Get-Content -Path $Path -Encoding ascii
+    $sec  = $enc | ConvertTo-SecureString -Key $key
+    $bstr2 = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+    try {
+        return [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr2)
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr2)
+    }
+}
+
+function Set-VaultEncProfileFunction {
+    Write-Status "[-] [VaultEnc] adding Protect/Unprotect-VaultEnc to PowerShell profile" 'Cyan'
+    try {
+        $funcDef = @'
+
+# BEGIN RedWindows VaultEnc
+function Protect-VaultEnc {
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$Path = (Join-Path $env:USERPROFILE '.vault.enc')
+    )
+
+    $passphrase = Read-Host "Passphrase" -AsSecureString
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($passphrase)
+    try {
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+
+    $salt = [byte[]](11, 22, 33, 44, 55, 66, 77, 88, 99, 10, 12, 13, 14, 15, 16, 17)
+    $kdf  = New-Object System.Security.Cryptography.Rfc2898DeriveBytes($plain, $salt, 100000)
+    $key  = $kdf.GetBytes(32)
+
+    Read-Host "GitHub PAT" -AsSecureString |
+        ConvertFrom-SecureString -Key $key |
+        Set-Content -Path $Path -Encoding ascii
+
+    Write-Host "Wrote encrypted vault to $Path" -ForegroundColor Green
+}
+
+function Unprotect-VaultEnc {
+    param(
+        [Parameter(Mandatory = $false)]
+        [string]$Path = (Join-Path $env:USERPROFILE '.vault.enc')
+    )
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Vault file not found: $Path"
+    }
+
+    $passphrase = Read-Host "Passphrase" -AsSecureString
+    $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($passphrase)
+    try {
+        $plainPass = [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr)
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr)
+    }
+
+    $salt = [byte[]](11, 22, 33, 44, 55, 66, 77, 88, 99, 10, 12, 13, 14, 15, 16, 17)
+    $kdf  = New-Object System.Security.Cryptography.Rfc2898DeriveBytes($plainPass, $salt, 100000)
+    $key  = $kdf.GetBytes(32)
+    $enc  = Get-Content -Path $Path -Encoding ascii
+    $sec  = $enc | ConvertTo-SecureString -Key $key
+    $bstr2 = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($sec)
+    try {
+        return [Runtime.InteropServices.Marshal]::PtrToStringAuto($bstr2)
+    } finally {
+        [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr2)
+    }
+}
+# END RedWindows VaultEnc
+'@
+
+        $profilePaths = @(
+            (Join-Path $env:USERPROFILE 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
+            (Join-Path $env:USERPROFILE 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1'),
+            (Join-Path "C:\Users\$($script:AttackerUsername)" 'Documents\WindowsPowerShell\Microsoft.PowerShell_profile.ps1'),
+            (Join-Path "C:\Users\$($script:AttackerUsername)" 'Documents\PowerShell\Microsoft.PowerShell_profile.ps1')
+        ) | Select-Object -Unique
+
+        $updated = 0
+        foreach ($profilePath in $profilePaths) {
+            $profileDir = Split-Path -Path $profilePath -Parent
+            if (-not (Test-Path -LiteralPath $profileDir)) {
+                New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+            }
+
+            if (Test-Path -LiteralPath $profilePath) {
+                $existing = Get-Content -LiteralPath $profilePath -Raw
+                # Replace current or older marked blocks.
+                foreach ($marker in @('VaultEnc', 'Unprotect-VaultEnc')) {
+                    if ($existing -match "(?s)# BEGIN RedWindows $marker.*?# END RedWindows $marker") {
+                        $existing = [regex]::Replace($existing, "(?s)# BEGIN RedWindows $marker.*?# END RedWindows $marker\r?\n?", '')
+                    }
+                }
+                Set-Content -LiteralPath $profilePath -Value $existing.TrimEnd() -Encoding UTF8
+            }
+
+            Add-Content -LiteralPath $profilePath -Value $funcDef -Encoding UTF8
+            $updated++
+        }
+
+        Write-Status "[+] [VaultEnc] added Protect/Unprotect-VaultEnc to $updated profile(s)" 'Green'
+        Add-Result -Name 'VaultEnc functions' -Status Installed -Detail "$updated profile(s)"
+        return $true
+    } catch {
+        Write-Status "[!] [VaultEnc] profile update failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'VaultEnc functions' -Status Skipped -Detail $_.Exception.Message
+        return $false
+    }
+}
+
+function Install-Controller {
+    Write-Status "`n=== Controller (optional) ===" 'Magenta'
+    $answer = Read-Host 'Install Controller? [y/N]'
+    if ($answer -notmatch '^[Yy]') {
+        Write-Status 'Restarting Computer in 30 seconds.' 'Yellow'
+        return
+    }
+
+    $token = $null
+    $cloneDir = Join-Path $script:ToolsRoot 'controller'
+    $ghUser = 'orthrus1775'
+    $repoUrl = 'https://github.com/orthrus1775/controller.git'
+
+    try {
+        $token = Unprotect-VaultEnc
+        Write-Status '[+] Vault decrypted' 'Green'
+
+        Update-SessionPath
+        if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
+            throw 'git is not on PATH'
+        }
+        if (-not (Get-Command python -ErrorAction SilentlyContinue) -and -not (Get-Command py -ErrorAction SilentlyContinue)) {
+            throw 'python is not on PATH'
+        }
+
+        $python = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'py' }
+
+        if (Test-Path -LiteralPath $cloneDir) {
+            Write-Status "[+] [Controller] $cloneDir already exists - updating" 'DarkGray'
+            Push-Location $cloneDir
+            try {
+                $authUrl = "https://${ghUser}:${token}@github.com/orthrus1775/controller.git"
+                try {
+                    Invoke-NativeQuiet { git remote set-url origin $authUrl 2>&1 | Out-Null }
+                    Invoke-NativeQuiet { git pull --ff-only 2>&1 | Out-Host }
+                    if ($LASTEXITCODE -ne 0) {
+                        throw "git pull failed (exit $LASTEXITCODE)"
+                    }
+                } finally {
+                    Invoke-NativeQuiet { git remote set-url origin $repoUrl 2>&1 | Out-Null }
+                    $authUrl = $null
+                }
+            } finally {
+                Pop-Location
+            }
+        } else {
+            Write-Status "[-] [Controller] cloning $repoUrl -> $cloneDir" 'Cyan'
+            # Username + PAT in URL for private HTTPS clone; never print the URL with token.
+            $authUrl = "https://${ghUser}:${token}@github.com/orthrus1775/controller.git"
+            try {
+                Invoke-NativeQuiet { git clone --depth 1 $authUrl $cloneDir 2>&1 | Out-Host }
+                if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $cloneDir)) {
+                    throw "git clone failed (exit $LASTEXITCODE)"
+                }
+            } finally {
+                $authUrl = $null
+            }
+            # Scrub credentials from remote URL after clone.
+            Push-Location $cloneDir
+            try {
+                Invoke-NativeQuiet { git remote set-url origin $repoUrl 2>&1 | Out-Null }
+            } finally {
+                Pop-Location
+            }
+        }
+
+        Push-Location $cloneDir
+        try {
+            $reqFile = Join-Path $cloneDir 'requirements.txt'
+            if (-not (Test-Path -LiteralPath $reqFile)) {
+                throw 'requirements.txt not found in controller repo'
+            }
+
+            Write-Status '[-] [Controller] pip install -r requirements.txt' 'Cyan'
+            Invoke-NativeQuiet { & $python -m pip install -r $reqFile 2>&1 | Out-Host }
+            if ($LASTEXITCODE -ne 0) {
+                throw "pip install failed (exit $LASTEXITCODE)"
+            }
+
+            $iconArgs = @()
+            if (Test-Path -LiteralPath (Join-Path $cloneDir 'controller.ico')) {
+                $iconArgs = @('--icon=controller.ico')
+            }
+
+            Write-Status '[-] [Controller] pyinstaller build' 'Cyan'
+            $pyiArgs = @(
+                '-m', 'PyInstaller',
+                '--onefile', '--console', '--name', 'controller'
+            ) + $iconArgs + @(
+                '--hidden-import=gatekeeper',
+                '--hidden-import=browserconf',
+                '--hidden-import=browsergen',
+                '--hidden-import=emailconf',
+                '--hidden-import=excelgen',
+                '--hidden-import=fileops',
+                '--hidden-import=keymaster',
+                '--hidden-import=outlookgen',
+                '--hidden-import=pdfgen',
+                '--hidden-import=pptgen',
+                '--hidden-import=rdpgen',
+                '--hidden-import=scriptgen',
+                '--hidden-import=sshgen',
+                '--hidden-import=taskmaster',
+                '--hidden-import=textgen',
+                '--hidden-import=thunderbirdgen',
+                '--hidden-import=webgen',
+                '--hidden-import=wmigen',
+                '--hidden-import=wordgen',
+                '--hidden-import=zipgen',
+                '--additional-hooks-dir=.',
+                'main.py'
+            )
+            Invoke-NativeQuiet { & $python @pyiArgs 2>&1 | Out-Host }
+            if ($LASTEXITCODE -ne 0) {
+                throw "pyinstaller failed (exit $LASTEXITCODE)"
+            }
+
+            Write-Status '[-] [Controller] copying default.pptx template' 'Cyan'
+            $pptxSrc = & $python -c "import pptx, os; print(os.path.join(os.path.dirname(pptx.__file__), 'templates', 'default.pptx'))" 2>$null
+            if (-not $pptxSrc -or -not (Test-Path -LiteralPath $pptxSrc.Trim())) {
+                # Fallback to the common Python 3.12 layout the operator uses.
+                $pptxSrc = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\Lib\site-packages\pptx\templates\default.pptx'
+            } else {
+                $pptxSrc = $pptxSrc.Trim()
+            }
+            if (-not (Test-Path -LiteralPath $pptxSrc)) {
+                throw "default.pptx not found (looked via python pptx and $pptxSrc)"
+            }
+            Copy-Item -LiteralPath $pptxSrc -Destination (Join-Path $cloneDir 'default.pptx') -Force
+
+            Write-Status "[+] [Controller] built under $cloneDir" 'Green'
+            Add-Result -Name 'Controller' -Status Installed -Detail $cloneDir
+        } finally {
+            Pop-Location
+        }
+    } catch {
+        Write-Status "[!] [Controller] $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Controller' -Status Skipped -Detail $_.Exception.Message
+        Write-Status 'Restarting Computer in 30 seconds.' 'Yellow'
+    } finally {
+        if ($null -ne $token) {
+            $token = $null
+            Remove-Variable token -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 function Set-SshCopyIdFunction {
     Write-Status "[-] [ssh-copy-id] adding function to PowerShell profile" 'Cyan'
     try {

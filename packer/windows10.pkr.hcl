@@ -23,7 +23,7 @@ variable "iso_checksum" {
 
 variable "vm_name" {
   type    = string
-  default = "redwindows10"
+  default = "CL26WIN10"
 }
 
 # Must match the account created in http/autounattend.xml - that file isn't
