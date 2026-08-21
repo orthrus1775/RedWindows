@@ -131,11 +131,12 @@ function Complete-Installation {
     Disable-AutoLogin
     Remove-LocalSupportUser
     Show-Summary
-    Start-Sleep -Seconds 300
+    Start-Sleep -Seconds 30
     Write-Status "`n=== Installation complete - final restart ===" 'Magenta'
     Install-Controller
     Wait-ForStageBreakpoint
-    Start-Sleep -Seconds 30
+    Write-Status "`n=== Restarting in 5 minutes ===" 'Magenta'
+    Start-Sleep -Seconds 300
     Restart-Computer -Force
 }
 
