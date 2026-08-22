@@ -455,6 +455,18 @@
       ]
     },
     {
+      "name": "bofhound",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "coffeegist/bofhound",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
       "name": "BofRoast",
       "category": "bof",
       "enabled": true,
@@ -593,6 +605,18 @@
       ]
     },
     {
+      "name": "nanodump",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "fortra/nanodump",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
       "name": "nanorobeus",
       "category": "bof",
       "enabled": true,
@@ -639,6 +663,18 @@
           "repo": "VoldeSec/PatchlessInlineExecute-Assembly",
           "destRoot": "BOF",
           "buildScript": "src\\compile.bat"
+        }
+      ]
+    },
+    {
+      "name": "PersisTask-BOF",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "nickzer0/PersisTask-BOF",
+          "destRoot": "BOF"
         }
       ]
     },
@@ -692,6 +728,30 @@
       ]
     },
     {
+      "name": "smbtakeover",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "zyn3rgy/smbtakeover",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "svcmodprivesc-BOF",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "0xGunrunner/svcmodprivesc-BOF",
+          "destRoot": "BOF"
+        }
+      ]
+    },
+    {
       "name": "secinject",
       "category": "bof",
       "enabled": true,
@@ -725,6 +785,19 @@
           "type": "bofMake",
           "repo": "iilegacyyii/ThreadlessInject-BOF",
           "destRoot": "BOF"
+        }
+      ]
+    },
+    {
+      "name": "TimeStomp_bof",
+      "category": "bof",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "bofMake",
+          "repo": "RobotOperator/TimeStomp_bof",
+          "destRoot": "BOF",
+          "makeDir": "src"
         }
       ]
     },
