@@ -126,11 +126,41 @@ function Wait-ForStageBreakpoint {
     }
 }
 
+function Remove-DesktopRedWindowsFolder {
+    $desktopCopy = Join-Path "C:\Users\$($script:AttackerUsername)" 'Desktop\RedWindows'
+    if (-not (Test-Path -LiteralPath $desktopCopy)) {
+        Write-Status "[+] [Desktop RedWindows] $desktopCopy not present - skip" 'DarkGray'
+        return
+    }
+
+    # Stage continuation should already be running from C:\Tools; never delete our live tree.
+    $liveRoot = $null
+    if ($script:RedWindowsRoot) {
+        $liveRoot = [System.IO.Path]::GetFullPath($script:RedWindowsRoot).TrimEnd('\')
+    }
+    $targetRoot = [System.IO.Path]::GetFullPath($desktopCopy).TrimEnd('\')
+    if ($liveRoot -and ($liveRoot -eq $targetRoot -or $liveRoot.StartsWith($targetRoot + '\', [System.StringComparison]::OrdinalIgnoreCase))) {
+        Write-Status "[!] [Desktop RedWindows] still running from $liveRoot - skip delete" 'Yellow'
+        return
+    }
+
+    Write-Status "[-] [Desktop RedWindows] removing $desktopCopy" 'Cyan'
+    try {
+        Remove-Item -LiteralPath $desktopCopy -Recurse -Force -ErrorAction Stop
+        Write-Status "[+] [Desktop RedWindows] removed" 'Green'
+        Add-Result -Name 'Desktop RedWindows' -Status Installed -Detail "removed $desktopCopy"
+    } catch {
+        Write-Status "[!] [Desktop RedWindows] remove failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Desktop RedWindows' -Status Skipped -Detail $_.Exception.Message
+    }
+}
+
 function Complete-Installation {
     Unregister-ContinuationTask
     Disable-AutoLogin
     Remove-LocalSupportUser
     Show-Summary
+    Remove-DesktopRedWindowsFolder
     Start-Sleep -Seconds 30
     Write-Status "`n=== Installation complete - final restart ===" 'Magenta'
     Install-Controller
