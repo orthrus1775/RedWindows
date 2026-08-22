@@ -101,6 +101,7 @@ function Initialize-Environment {
     Write-Status "[+] Transcript: $script:TranscriptFile" 'Green'
     Write-Status "[+] Results log: $script:ResultsCsv" 'Green'
     Install-VaultEncFile
+    Set-UsCentralTimeZone
     Enable-NumLock
 }
 
@@ -193,6 +194,7 @@ function Invoke-Stage4 {
     Install-AllPackages
     Install-ConfuseEx
     Install-Client
+    New-CombinedBofCna
     Set-QuickAccess
     Set-QuickAccess -Path $script:PayloadRoot
     Set-Background

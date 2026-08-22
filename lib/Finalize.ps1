@@ -281,8 +281,16 @@ try {
     if (-not (Test-Path -LiteralPath $reqFile)) { throw "requirements.txt not found" }
 
     Write-BuildLog "pip install -r requirements.txt ($pythonCmd)"
-    & $pythonCmd -m pip install -r $reqFile *>> $logFile
-    if ($LASTEXITCODE -ne 0) { throw "pip install failed (exit $LASTEXITCODE)" }
+    # Native tools write INFO to stderr; EAP Stop turns that into a terminating error.
+    $prevEap = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $pythonCmd -m pip install -r $reqFile 2>&1 | Add-Content -LiteralPath $logFile
+        $pipExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    if ($pipExit -ne 0) { throw "pip install failed (exit $pipExit)" }
 
     $iconArgs = @()
     if (Test-Path -LiteralPath (Join-Path $cloneDir "controller.ico")) {
@@ -333,8 +341,14 @@ try {
         "--additional-hooks-dir=.",
         "main.py"
     )
-    & $pythonCmd @pyiArgs *>> $logFile
-    if ($LASTEXITCODE -ne 0) { throw "pyinstaller failed (exit $LASTEXITCODE)" }
+    $ErrorActionPreference = "Continue"
+    try {
+        & $pythonCmd @pyiArgs 2>&1 | ForEach-Object { "$_" } | Add-Content -LiteralPath $logFile
+        $pyiExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    if ($pyiExit -ne 0) { throw "pyinstaller failed (exit $pyiExit)" }
 
     $exe = Join-Path $cloneDir "dist\controller.exe"
     if (-not (Test-Path -LiteralPath $exe)) { throw "build finished but dist\controller.exe is missing" }
@@ -356,15 +370,16 @@ exit $exitCode
     }
 
     $arg = "-NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$buildScript`""
-    $action    = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg -WorkingDirectory $CloneDir
-    $settings  = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2)
-    # Limited = non-admin token (PyInstaller 7+ blocks admin builds).
-    $principal = New-ScheduledTaskPrincipal -UserId $script:AttackerUsername -LogonType Password -RunLevel Limited
+    $action   = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arg -WorkingDirectory $CloneDir
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2)
+    # One-shot trigger required to register; we start the task immediately below.
+    $trigger  = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(-5))
 
     Write-Status "[-] [Controller] starting non-admin build task as $($script:AttackerUsername)" 'Cyan'
-    Register-ScheduledTask -TaskName $taskName -Action $action -Principal $principal -Settings $settings `
-        -Description 'RedWindows controller PyInstaller build (non-admin)' `
-        -Password $script:AttackerPassword | Out-Null
+    # -User/-Password/-RunLevel is its own parameter set; cannot combine with -Principal.
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings `
+        -User $script:AttackerUsername -Password $script:AttackerPassword -RunLevel Limited `
+        -Description 'RedWindows controller PyInstaller build (non-admin)' -Force | Out-Null
 
     try {
         Start-ScheduledTask -TaskName $taskName
@@ -457,23 +472,39 @@ function Install-Controller {
         Invoke-ControllerUserBuild -CloneDir $cloneDir
 
         Update-SessionPath
-        $python = if (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { 'py' }
 
         Write-Status '[-] [Controller] copying default.pptx template' 'Cyan'
-        $pptxSrc = & $python -c "import pptx, os; print(os.path.join(os.path.dirname(pptx.__file__), 'templates', 'default.pptx'))" 2>$null
-        if (-not $pptxSrc -or -not (Test-Path -LiteralPath $pptxSrc.Trim())) {
-            $pptxSrc = Join-Path $env:LOCALAPPDATA 'Programs\Python\Python312\Lib\site-packages\pptx\templates\default.pptx'
-        } else {
-            $pptxSrc = $pptxSrc.Trim()
+        $destPptx = Join-Path $cloneDir 'default.pptx'
+        $pptxSrc = $null
+
+        # Resolve template from whatever python has pptx (do not hardcode Python3xx).
+        $pythonCandidates = @(
+            (Get-Command python -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source),
+            (Get-Command py -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source)
+        )
+        $attackerPyRoot = Join-Path "C:\Users\$($script:AttackerUsername)" 'AppData\Local\Programs\Python'
+        if (Test-Path -LiteralPath $attackerPyRoot) {
+            $pythonCandidates += @(
+                Get-ChildItem -LiteralPath $attackerPyRoot -Filter 'python.exe' -Recurse -ErrorAction SilentlyContinue |
+                    Select-Object -ExpandProperty FullName
+            )
         }
-        # Prefer attacker's Python312 layout if current elevated session lacks pptx.
-        if (-not (Test-Path -LiteralPath $pptxSrc)) {
-            $pptxSrc = Join-Path "C:\Users\$($script:AttackerUsername)\AppData\Local\Programs\Python\Python312\Lib\site-packages\pptx\templates\default.pptx"
+        $pythonCandidates = @($pythonCandidates | Where-Object { $_ } | Select-Object -Unique)
+
+        foreach ($pyExe in $pythonCandidates) {
+            $pptxSrc = & $pyExe -c "import pathlib, pptx; print(pathlib.Path(pptx.__file__).parent / 'templates' / 'default.pptx')" 2>$null
+            if ($pptxSrc) {
+                $pptxSrc = "$pptxSrc".Trim()
+                if (Test-Path -LiteralPath $pptxSrc) { break }
+            }
+            $pptxSrc = $null
         }
-        if (-not (Test-Path -LiteralPath $pptxSrc)) {
-            throw "default.pptx not found (looked via python pptx and attacker Python312 path)"
+
+        if (-not $pptxSrc -or -not (Test-Path -LiteralPath $pptxSrc)) {
+            throw 'default.pptx not found via python -c (import pptx). Is python-pptx installed for attacker python?'
         }
-        Copy-Item -LiteralPath $pptxSrc -Destination (Join-Path $cloneDir 'default.pptx') -Force
+        Copy-Item -LiteralPath $pptxSrc -Destination $destPptx -Force
+        Write-Status "[+] [Controller] copied default.pptx from $pptxSrc" 'Green'
 
         $exe = Join-Path $cloneDir 'dist\controller.exe'
         if (-not (Test-Path -LiteralPath $exe)) {

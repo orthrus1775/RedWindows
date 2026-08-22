@@ -85,6 +85,27 @@ public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPt
     }
 }
 
+function Set-UsCentralTimeZone {
+    # Windows ID "Central Standard Time" is US Central and observes DST.
+    $tzId = 'Central Standard Time'
+    Write-Status "[-] [Time zone] setting $tzId" 'Cyan'
+    try {
+        $current = (Get-TimeZone).Id
+        if ($current -eq $tzId) {
+            Write-Status "[+] [Time zone] already $tzId" 'DarkGray'
+            Add-Result -Name 'Time zone' -Status Installed -Detail 'already Central Standard Time'
+            return
+        }
+
+        Set-TimeZone -Id $tzId
+        Write-Status "[+] [Time zone] set to $tzId (was $current)" 'Green'
+        Add-Result -Name 'Time zone' -Status Installed -Detail $tzId
+    } catch {
+        Write-Status "[!] [Time zone] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Time zone' -Status Skipped -Detail $_.Exception.Message
+    }
+}
+
 function Show-FileExtensions {
     Write-Status "[-] [File extensions] enabling" 'Cyan'
     try {
