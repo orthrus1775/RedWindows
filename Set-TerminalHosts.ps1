@@ -96,7 +96,7 @@ function Set-ProfileHost {
     return [regex]::Replace($CommandLine, 'https://[^"\s]+', "https://$HostValue")
 }
 
-function Normalize-HostValue {
+function Set-HostValue {
     param(
         [string]$Value,
         [ValidateSet('ssh', 'https')]
@@ -143,32 +143,32 @@ function Update-ProfileValue {
         [string]$Value
     )
 
-    $profile = $profiles | Where-Object { $_.name -eq $Target.Name } | Select-Object -First 1
-    if (-not $profile) {
+    $termProfile = $profiles | Where-Object { $_.name -eq $Target.Name } | Select-Object -First 1
+    if (-not $termProfile) {
         Write-Host "[!] Profile '$($Target.Name)' not found in settings.json - skip" -ForegroundColor Yellow
         return $false
     }
-    if (-not $profile.commandline) {
+    if (-not $termProfile.commandline) {
         Write-Host "[!] Profile '$($Target.Name)' has no commandline - skip" -ForegroundColor Yellow
         return $false
     }
 
-    $value = Normalize-HostValue -Value $Value -Kind $Target.Kind
-    $profile.commandline = Set-ProfileHost -CommandLine $profile.commandline -Kind $Target.Kind -HostValue $value
-    Write-Host "[+] $($Target.Name) -> $($profile.commandline)" -ForegroundColor Green
+    $value = Set-HostValue -Value $Value -Kind $Target.Kind
+    $termProfile.commandline = Set-ProfileHost -CommandLine $termProfile.commandline -Kind $Target.Kind -HostValue $value
+    Write-Host "[+] $($Target.Name) -> $($termProfile.commandline)" -ForegroundColor Green
     return $true
 }
 
 function Update-OneInteractive {
     param([pscustomobject]$Target)
 
-    $profile = $profiles | Where-Object { $_.name -eq $Target.Name } | Select-Object -First 1
-    if (-not $profile -or -not $profile.commandline) {
+    $termProfile = $profiles | Where-Object { $_.name -eq $Target.Name } | Select-Object -First 1
+    if (-not $termProfile -or -not $termProfile.commandline) {
         Write-Host "[!] Profile '$($Target.Name)' missing or has no commandline - skip" -ForegroundColor Yellow
         return
     }
 
-    $current = Get-ProfileHost -CommandLine $profile.commandline -Kind $Target.Kind
+    $current = Get-ProfileHost -CommandLine $termProfile.commandline -Kind $Target.Kind
     $hint = if ($Target.Kind -eq 'ssh') { 'IP or hostname' } else { 'domain or URL host (no https://)' }
     $prompt = "  $($Target.Name) [$hint]"
     if ($current) { $prompt += " (current: $current)" }
