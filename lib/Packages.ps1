@@ -174,8 +174,27 @@ function ConvertTo-PackageTier {
         }
         'remoteFile' {
             $url = [string]$TierSpec.url
-            $destination = ([string]$TierSpec.destination).Replace('{ToolsRoot}', $script:ToolsRoot)
-            return { Get-RemoteFile -Url $url -Destination $destination }.GetNewClosure()
+            $destination = ([string]$TierSpec.destination).
+                Replace('{ToolsRoot}', $script:ToolsRoot).
+                Replace('{DlRoot}', $script:DlRoot)
+            $extractZip = [bool]$TierSpec.extractZip
+            $extractTo = if ($TierSpec.extractTo) {
+                ([string]$TierSpec.extractTo).
+                    Replace('{ToolsRoot}', $script:ToolsRoot).
+                    Replace('{DlRoot}', $script:DlRoot)
+            } elseif ($extractZip) {
+                Join-Path $script:ToolsRoot $PackageName
+            } else {
+                $null
+            }
+            return {
+                $params = @{ Url = $url; Destination = $destination }
+                if ($extractZip) {
+                    $params.ExtractZip = $true
+                    if ($extractTo) { $params.ExtractTo = $extractTo }
+                }
+                Get-RemoteFile @params
+            }.GetNewClosure()
         }
         'function' {
             $fnName = [string]$TierSpec.name

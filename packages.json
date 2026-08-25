@@ -1978,6 +1978,20 @@
       ]
     },
     {
+      "name": "ResourceHacker",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "remoteFile",
+          "url": "https://www.angusj.com/resourcehacker/resource_hacker.zip",
+          "destination": "{DlRoot}\\resource_hacker.zip",
+          "extractZip": true,
+          "extractTo": "{ToolsRoot}"
+        }
+      ]
+    },
+    {
       "name": "eicar.com",
       "category": "misc",
       "enabled": true,

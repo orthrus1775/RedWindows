@@ -94,7 +94,9 @@ function Get-RemoteFile {
         [Parameter(Mandatory)]
         [string]$Url,
         [Parameter(Mandatory)]
-        [string]$Destination
+        [string]$Destination,
+        [switch]$ExtractZip,
+        [string]$ExtractTo
     )
 
     $destDir = Split-Path -Path $Destination -Parent
@@ -106,9 +108,31 @@ function Get-RemoteFile {
     try {
         Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
         Write-Status "[+] [Download] saved $Destination" 'Green'
-        return $true
     } catch {
         Write-Status "[!] [Download] failed: $($_.Exception.Message)" 'Yellow'
+        return $false
+    }
+
+    if (-not $ExtractZip) {
+        return $true
+    }
+
+    if ([string]::IsNullOrWhiteSpace($ExtractTo)) {
+        Write-Status "[!] [Download] extractZip set but no extract destination" 'Yellow'
+        return $false
+    }
+
+    if (-not (Test-Path $ExtractTo)) {
+        New-Item -ItemType Directory -Path $ExtractTo -Force | Out-Null
+    }
+
+    Write-Status "[-] [Download] extracting $Destination -> $ExtractTo" 'Cyan'
+    try {
+        Expand-Archive -Path $Destination -DestinationPath $ExtractTo -Force
+        Write-Status "[+] [Download] extracted to $ExtractTo" 'Green'
+        return $true
+    } catch {
+        Write-Status "[!] [Download] extraction failed: $($_.Exception.Message)" 'Yellow'
         return $false
     }
 }
