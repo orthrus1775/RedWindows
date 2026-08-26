@@ -193,6 +193,7 @@ function Invoke-Stage4 {
     Install-NimPackages
 
     Install-AllPackages
+    Install-FaceDancerOffline
     Install-ConfuseEx
     Install-Client
     New-CombinedBofCna

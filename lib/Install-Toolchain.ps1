@@ -514,3 +514,125 @@ function Install-ConfuseEx {
     dotnet restore Confuser2.sln
     dotnet build Confuser2.sln -c Release
 }
+
+function Install-FaceDancerOffline {
+    # Prefetch FaceDancer attack-mode crates while install still has internet.
+    # Runtime uses CARGO_HOME + vendored sources so payloads build offline.
+    Update-SessionPath
+
+    $fdDir = Join-Path $script:ToolsRoot 'FaceDancer'
+    $releaseExe = Join-Path $fdDir 'target\release\FaceDancer.exe'
+    $rootExe = Join-Path $fdDir 'FaceDancer.exe'
+    if (-not (Test-Path -LiteralPath $rootExe)) {
+        if (Test-Path -LiteralPath $releaseExe) {
+            Copy-Item -LiteralPath $releaseExe -Destination $rootExe -Force
+        } else {
+            Write-Status "[!] [FaceDancer offline] FaceDancer.exe not found under $fdDir - build FaceDancer first" 'Yellow'
+            Add-Result -Name 'FaceDancer offline' -Status Failed -Detail 'FaceDancer.exe missing'
+            return $false
+        }
+    }
+
+    $bundleCandidates = @(
+        (Join-Path $script:RedWindowsRoot 'lib\facedancer-offline'),
+        (Join-Path $script:ToolsRoot 'lib\facedancer-offline')
+    )
+    $bundleRoot = $bundleCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    if (-not $bundleRoot) {
+        Write-Status "[!] [FaceDancer offline] lib\facedancer-offline not found" 'Yellow'
+        Add-Result -Name 'FaceDancer offline' -Status Failed -Detail 'offline bundle missing'
+        return $false
+    }
+
+    $crateSrc = Join-Path $bundleRoot 'offline-crate'
+    $crateDst = Join-Path $script:ToolsRoot 'facedancer-offline-crate'
+    $vendorDir = Join-Path $script:ToolsRoot 'facedancer-vendor'
+    $cargoHome = Join-Path $script:ToolsRoot 'facedancer-cargo-home'
+    $vendorMarker = Join-Path $vendorDir '.facedancer-vendored'
+
+    Write-Status "[-] [FaceDancer offline] copying stub crate -> $crateDst" 'Cyan'
+    if (Test-Path -LiteralPath $crateDst) {
+        Remove-Item -LiteralPath $crateDst -Recurse -Force
+    }
+    Copy-Item -LiteralPath $crateSrc -Destination $crateDst -Recurse -Force
+
+    $vendorPathUnix = ($vendorDir -replace '\\', '/')
+    $configToml = @"
+# Used via CARGO_HOME so FaceDancer payload builds never contact crates.io.
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "$vendorPathUnix"
+
+[net]
+offline = true
+"@
+    New-Item -ItemType Directory -Path $cargoHome -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $cargoHome 'config.toml') -Value $configToml -Encoding UTF8
+
+    if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
+        Write-Status "[!] [FaceDancer offline] cargo not on PATH - skipping vendor" 'Yellow'
+        Add-Result -Name 'FaceDancer offline' -Status Failed -Detail 'cargo not on PATH'
+        return $false
+    }
+
+    if (-not (Test-Path -LiteralPath $vendorMarker)) {
+        Write-Status "[-] [FaceDancer offline] cargo vendor -> $vendorDir (needs internet once)" 'Cyan'
+        Push-Location $crateDst
+        try {
+            # Offline crate pins 1.85.0 via rust-toolchain.toml.
+            Invoke-NativeQuiet { cargo generate-lockfile *>$null }
+            if ($LASTEXITCODE -ne 0) {
+                Write-Status "[!] [FaceDancer offline] cargo generate-lockfile failed (exit $LASTEXITCODE)" 'Yellow'
+                Add-Result -Name 'FaceDancer offline' -Status Failed -Detail "generate-lockfile (exit $LASTEXITCODE)"
+                return $false
+            }
+
+            if (Test-Path -LiteralPath $vendorDir) {
+                Remove-Item -LiteralPath $vendorDir -Recurse -Force
+            }
+            New-Item -ItemType Directory -Path $vendorDir -Force | Out-Null
+            cargo vendor --locked $vendorDir
+            if ($LASTEXITCODE -ne 0) {
+                Write-Status "[!] [FaceDancer offline] cargo vendor failed (exit $LASTEXITCODE)" 'Yellow'
+                Add-Result -Name 'FaceDancer offline' -Status Failed -Detail "cargo vendor (exit $LASTEXITCODE)"
+                return $false
+            }
+            Set-Content -LiteralPath $vendorMarker -Value (Get-Date -Format 'o') -Encoding UTF8
+        } finally {
+            Pop-Location
+        }
+    } else {
+        Write-Status "[+] [FaceDancer offline] vendor cache already present" 'DarkGray'
+    }
+
+    $wrapperLines = @(
+        '@echo off'
+        'rem FaceDancer generates a crate and runs cargo build in %CD%.'
+        'rem Use install-time vendored crates; do not hit the network.'
+        "set `"PATH=%USERPROFILE%\.cargo\bin;C:\msys64\mingw64\bin;%PATH%`""
+        "set `"CARGO_HOME=$cargoHome`""
+        'set "CARGO_NET_OFFLINE=true"'
+        'set "RUSTUP_AUTO_INSTALL=0"'
+        "`"$rootExe`" %*"
+    )
+    $wrapperPath = Join-Path $fdDir 'FaceDancer.cmd'
+    $wrapperTools = Join-Path $script:ToolsRoot 'FaceDancer.cmd'
+    Set-Content -LiteralPath $wrapperPath -Value ($wrapperLines -join "`r`n") -Encoding ASCII
+    Copy-Item -LiteralPath $wrapperPath -Destination $wrapperTools -Force
+
+    # Prefer the offline wrapper when FaceDancer is invoked from PATH.
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $pathEntries = @()
+    if ($userPath) { $pathEntries = @($userPath -split ';' | Where-Object { $_ }) }
+    if ($pathEntries -notcontains $script:ToolsRoot) {
+        $newPath = if ($userPath) { "$script:ToolsRoot;$userPath" } else { $script:ToolsRoot }
+        [Environment]::SetEnvironmentVariable('Path', $newPath, 'User')
+        $env:Path = "$script:ToolsRoot;$env:Path"
+    }
+
+    Write-Status "[+] [FaceDancer offline] wrapper + vendored crates ready ($wrapperTools)" 'Green'
+    Add-Result -Name 'FaceDancer offline' -Status Installed -Detail "vendor:$vendorDir"
+    return $true
+}

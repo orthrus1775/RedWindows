@@ -1015,8 +1015,8 @@ function Install-RustToolChain {
         return $false
     }
 
-    Write-Status "[-] [Rust toolchain] rustup toolchain install 1.85.0" 'Cyan'
-    Invoke-NativeQuiet { rustup toolchain install 1.85.0 *>$null }
+    Write-Status "[-] [Rust toolchain] rustup toolchain install 1.85.0 (rustfmt, clippy)" 'Cyan'
+    Invoke-NativeQuiet { rustup toolchain install 1.85.0 --component rustfmt,clippy *>$null }
     if ($LASTEXITCODE -ne 0) {
         Write-Status "[!] [Rust toolchain] toolchain install failed (exit $LASTEXITCODE)" 'Yellow'
         Add-Result -Name 'Rust toolchain 1.85.0' -Status Failed -Detail "rustup toolchain install (exit $LASTEXITCODE)"
