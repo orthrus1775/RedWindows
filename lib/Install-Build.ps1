@@ -1007,6 +1007,35 @@ function Install-Pipx {
     return $true
 }
 
+function Install-RustToolChain {
+    Update-SessionPath
+    if (-not (Get-Command rustup -ErrorAction SilentlyContinue)) {
+        Write-Status "[!] [Rust toolchain] rustup is not on PATH - skipping" 'Yellow'
+        Add-Result -Name 'Rust toolchain 1.85.0' -Status Failed -Detail 'rustup not on PATH'
+        return $false
+    }
+
+    Write-Status "[-] [Rust toolchain] rustup toolchain install 1.85.0" 'Cyan'
+    Invoke-NativeQuiet { rustup toolchain install 1.85.0 *>$null }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "[!] [Rust toolchain] toolchain install failed (exit $LASTEXITCODE)" 'Yellow'
+        Add-Result -Name 'Rust toolchain 1.85.0' -Status Failed -Detail "rustup toolchain install (exit $LASTEXITCODE)"
+        return $false
+    }
+
+    Write-Status "[-] [Rust toolchain] rustup target add x86_64-pc-windows-gnu --toolchain 1.85.0" 'Cyan'
+    Invoke-NativeQuiet { rustup target add x86_64-pc-windows-gnu --toolchain 1.85.0 *>$null }
+    if ($LASTEXITCODE -ne 0) {
+        Write-Status "[!] [Rust toolchain] target add failed (exit $LASTEXITCODE)" 'Yellow'
+        Add-Result -Name 'Rust toolchain 1.85.0' -Status Failed -Detail "rustup target add (exit $LASTEXITCODE)"
+        return $false
+    }
+
+    Write-Status "[+] [Rust toolchain] 1.85.0 + x86_64-pc-windows-gnu installed" 'Green'
+    Add-Result -Name 'Rust toolchain 1.85.0' -Status Installed -Detail 'x86_64-pc-windows-gnu'
+    return $true
+}
+
 function Install-PipxPackage {
     param(
         [string]$Name,

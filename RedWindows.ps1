@@ -168,6 +168,7 @@ function Invoke-Stage3 {
         $null = Install-WingetPackage 'NuGet' 'Microsoft.NuGet'
         $null = Install-WingetPackage 'Visual Studio 2022 Community' 'Microsoft.VisualStudio.2022.Community'
         Install-Pipx
+        Install-RustToolChain
 
         Complete-Stage -NextStage 4
     } catch {
