@@ -301,6 +301,17 @@
       ]
     },
     {
+      "name": "EDRChoker",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "native",
+          "repo": "TwoSevenOneT/EDRChoker"
+        }
+      ]
+    },
+    {
       "name": "Rubeus",
       "category": "sharp",
       "enabled": true,
@@ -333,6 +344,17 @@
         {
           "type": "clone",
           "repo": "PowerShellMafia/PowerSploit"
+        }
+      ]
+    },
+    {
+      "name": "DNSCAT",
+      "category": "clone",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "iagox86/dnscat2"
         }
       ]
     },

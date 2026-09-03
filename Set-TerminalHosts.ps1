@@ -76,7 +76,14 @@ function Get-ProfileHost {
         [string]$Kind
     )
     if ($Kind -eq 'ssh') {
-        if ($CommandLine -match 'attacker@(\S+)') { return $Matches[1] }
+        # Placeholders like "<Team Server IP>" contain spaces; also recover from a
+        # prior replace that left leftover "Server IP>" after the real host.
+        if ($CommandLine -match 'attacker@(.+)$') {
+            $h = $Matches[1].Trim()
+            if ($h -match '^(?<ip>\d{1,3}(?:\.\d{1,3}){3})') { return $Matches['ip'] }
+            $h = $h -replace '[<>]', ''
+            return (($h -split '\s+') | Select-Object -First 1)
+        }
     } else {
         if ($CommandLine -match 'https://([^"\s]+)') { return $Matches[1] }
     }
@@ -91,7 +98,7 @@ function Set-ProfileHost {
         [string]$HostValue
     )
     if ($Kind -eq 'ssh') {
-        return [regex]::Replace($CommandLine, 'attacker@\S+', "attacker@$HostValue")
+        return [regex]::Replace($CommandLine, 'attacker@.+$', "attacker@$HostValue")
     }
     return [regex]::Replace($CommandLine, 'https://[^"\s]+', "https://$HostValue")
 }

@@ -30,6 +30,45 @@ function New-SshKeyPair {
     }
 }
 
+function Install-SshConfig {
+    Write-Status "[-] [SSH config] copying to attacker ~/.ssh/config" 'Cyan'
+    try {
+        $source = @(
+            (Join-Path $script:RedWindowsRoot 'lib\ssh-config'),
+            (Join-Path $script:ToolsRoot 'lib\ssh-config')
+        ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+
+        if (-not $source) {
+            throw 'lib\ssh-config not found under RedWindowsRoot or ToolsRoot'
+        }
+
+        $destPaths = @()
+        if ($script:AttackerUsername) {
+            $destPaths += (Join-Path "C:\Users\$($script:AttackerUsername)" '.ssh\config')
+        }
+        $current = Join-Path $env:USERPROFILE '.ssh\config'
+        if ($destPaths -notcontains $current) {
+            $destPaths += $current
+        }
+
+        foreach ($dest in $destPaths) {
+            $sshDir = Split-Path -Parent $dest
+            if (-not (Test-Path -LiteralPath $sshDir)) {
+                New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
+            }
+            Copy-Item -LiteralPath $source -Destination $dest -Force
+            Write-Status "[+] [SSH config] $source -> $dest" 'Green'
+        }
+
+        Add-Result -Name 'SSH config' -Status Installed -Detail ($destPaths -join ', ')
+        return $true
+    } catch {
+        Write-Status "[!] [SSH config] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'SSH config' -Status Skipped -Detail $_.Exception.Message
+        return $false
+    }
+}
+
 function Install-VaultEncFile {
     # Prefer repo/Tools vault.enc; ensure ~/.vault.enc (and attacker home) for later decrypt.
     $destPaths = @(

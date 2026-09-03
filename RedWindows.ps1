@@ -210,6 +210,7 @@ function Invoke-Stage5 {
 
     Install-WindowsUpdates
     New-SshKeyPair
+    Install-SshConfig
     Set-SshCopyIdFunction
     Set-VaultEncProfileFunction
     Set-WindowsTerminalConfig

@@ -1,0 +1,47 @@
+Host teamserver
+     HostName 10.10.10.129
+     User attacker
+     IdentityFile ~/.ssh/id_ed25519
+     ServerAliveInterval 30
+     ServerAliveCountMax 3
+     PubkeyAuthentication yes
+
+Host redirector01
+     HostName 30.30.30.30
+     User attacker
+     IdentityFile ~/.ssh/id_ed25519
+     ServerAliveInterval 30
+     ServerAliveCountMax 3
+     PubkeyAuthentication yes
+
+Host redirector02
+     HostName 30.30.30.31
+     User attacker
+     IdentityFile ~/.ssh/id_ed25519
+     ServerAliveInterval 30
+     ServerAliveCountMax 3
+     PubkeyAuthentication yes
+
+Host redirector03
+     HostName 30.30.30.32
+     User attacker
+     IdentityFile ~/.ssh/id_ed25519
+     ServerAliveInterval 30
+     ServerAliveCountMax 3
+     PubkeyAuthentication yes
+
+Host payload
+     HostName 30.30.30.33
+     User attacker
+     IdentityFile ~/.ssh/id_ed25519
+     ServerAliveInterval 30
+     ServerAliveCountMax 3
+     PubkeyAuthentication yes
+
+Host exfil
+     HostName 30.30.30.34
+     User attacker
+     IdentityFile ~/.ssh/id_ed25519
+     ServerAliveInterval 30
+     ServerAliveCountMax 3
+     PubkeyAuthentication yes
