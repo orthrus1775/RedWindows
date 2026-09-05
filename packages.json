@@ -1004,6 +1004,52 @@
       ]
     },
     {
+      "name": "SharpMove",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "0xthirteen/SharpMove",
+          "destRoot": "SharpTools",
+          "slnPath": "SharpMove\\SharpMove.sln"
+        }
+      ]
+    },
+    {
+      "name": "MoveKit",
+      "category": "clone",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "0xthirteen/MoveKit"
+        }
+      ]
+    },
+    {
+      "name": "StayKit",
+      "category": "clone",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "0xthirteen/StayKit"
+        }
+      ]
+    },
+    {
+      "name": "PowerView3-Aggressor",
+      "category": "clone",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "0xthirteen/PowerView3-Aggressor"
+        }
+      ]
+    },
+    {
       "name": "SharpRDP",
       "category": "sharp",
       "enabled": true,
@@ -1037,6 +1083,19 @@
           "type": "dotnet",
           "repo": "G0ldenGunSec/SharpSecDump",
           "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "SharpStay",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "0xthirteen/SharpStay",
+          "destRoot": "SharpTools",
+          "slnPath": "SharpStay\\SharpStay.sln"
         }
       ]
     },
@@ -1133,6 +1192,19 @@
           "type": "dotnet",
           "repo": "tyranid/DotNetToJScript",
           "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
+      "name": "FileWriter",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "dotnet",
+          "repo": "0xthirteen/FileWriter",
+          "destRoot": "SharpTools",
+          "slnPath": "FileWrite\\FileWrite.sln"
         }
       ]
     },
