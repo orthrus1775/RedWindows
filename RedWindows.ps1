@@ -123,6 +123,7 @@ function Invoke-Stage1 {
         New-RangeAdminUser
 
         Install-Winget
+        Install-Wsl
 
         Complete-Stage -NextStage 2
     } catch {
@@ -139,6 +140,7 @@ function Invoke-Stage2 {
 
     try {
         Disable-WindowsDefender
+        Complete-Wsl
 
         # Git needs a fresh session for PATH; keep it out of Install-AllPackages.
         $null = Install-WingetPackage 'Git'       'Git.Git'

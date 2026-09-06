@@ -242,3 +242,22 @@ function Get-PackageTable {
     }
     return $result
 }
+
+function Get-WslPackageList {
+    $catalogPath = Join-Path $script:RedWindowsRoot 'wsl_packages.json'
+    if (-not (Test-Path -LiteralPath $catalogPath)) {
+        $catalogPath = Join-Path $script:ToolsRoot 'wsl_packages.json'
+    }
+    if (-not (Test-Path -LiteralPath $catalogPath)) {
+        throw "wsl_packages.json not found (looked under RedWindowsRoot and ToolsRoot)"
+    }
+
+    $catalog = Get-Content -LiteralPath $catalogPath -Raw -Encoding UTF8 | ConvertFrom-Json
+    $names = @()
+    foreach ($pkg in @($catalog.packages)) {
+        if ($pkg.enabled -eq $false) { continue }
+        $name = if ($pkg.name) { [string]$pkg.name } else { [string]$pkg }
+        if ($name) { $names += $name }
+    }
+    return $names
+}

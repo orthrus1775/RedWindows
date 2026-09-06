@@ -19,6 +19,7 @@ function Save-SelfCopy {
     $persistentScript = Join-Path $script:ToolsRoot 'RedWindows.ps1'
     $persistentLib = Join-Path $script:ToolsRoot 'lib'
     $persistentPackages = Join-Path $script:ToolsRoot 'packages.json'
+    $persistentWslPackages = Join-Path $script:ToolsRoot 'wsl_packages.json'
     $persistentTerminalHosts = Join-Path $script:ToolsRoot 'Set-TerminalHosts.ps1'
     $persistentVault = Join-Path $script:ToolsRoot 'vault.enc'
 
@@ -33,6 +34,7 @@ function Save-SelfCopy {
     $scriptSource = Join-Path $repoRoot 'RedWindows.ps1'
     $libSource = Join-Path $repoRoot 'lib'
     $packagesSource = Join-Path $repoRoot 'packages.json'
+    $wslPackagesSource = Join-Path $repoRoot 'wsl_packages.json'
     $terminalHostsSource = Join-Path $repoRoot 'Set-TerminalHosts.ps1'
     $vaultSource = Join-Path $repoRoot 'vault.enc'
 
@@ -68,6 +70,10 @@ function Save-SelfCopy {
     }
     Copy-Item -Path $packagesSource -Destination $persistentPackages -Force
 
+    if (Test-Path -LiteralPath $wslPackagesSource) {
+        Copy-Item -Path $wslPackagesSource -Destination $persistentWslPackages -Force
+    }
+
     if (Test-Path -LiteralPath $terminalHostsSource) {
         Copy-Item -Path $terminalHostsSource -Destination $persistentTerminalHosts -Force
     }
@@ -76,7 +82,7 @@ function Save-SelfCopy {
         Copy-Item -Path $vaultSource -Destination $persistentVault -Force
     }
 
-    Write-Status "[+] [Self-copy] $persistentScript + lib\ + packages.json (+ Set-TerminalHosts.ps1 / vault.enc if present)" 'Green'
+    Write-Status "[+] [Self-copy] $persistentScript + lib\ + packages.json (+ wsl_packages.json / Set-TerminalHosts.ps1 / vault.enc if present)" 'Green'
     return $persistentScript
 }
 

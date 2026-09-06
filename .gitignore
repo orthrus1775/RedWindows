@@ -2,6 +2,7 @@ RedWindows-results.csv
 RedWindows-Transcript*
 Build_instructions.md
 verify-packages.md
+notes.md
 
 # Packer
 packer/output-*/

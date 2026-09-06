@@ -473,3 +473,169 @@ function Install-Winget {
         Add-Result -Name 'winget' -Status Failed -Detail $_.Exception.Message
     }
 }
+
+function Install-Wsl {
+    # Enable WSL + VM Platform only. Do not run `wsl --install` here — it can
+    # reboot before Complete-Stage records the next stage. Stage 1 already reboots.
+    Write-Status "[-] [WSL] enabling Windows features (no restart)" 'Cyan'
+    try {
+        $needed = @(
+            'Microsoft-Windows-Subsystem-Linux',
+            'VirtualMachinePlatform'
+        )
+        $enabled = @()
+        $pending = @()
+        foreach ($name in $needed) {
+            $feature = Get-WindowsOptionalFeature -Online -FeatureName $name
+            if ($feature.State -eq 'Enabled') {
+                $enabled += $name
+                continue
+            }
+            Enable-WindowsOptionalFeature -Online -FeatureName $name -All -NoRestart | Out-Null
+            $pending += $name
+        }
+
+        if ($pending.Count -eq 0) {
+            Write-Status "[+] [WSL] features already enabled" 'DarkGray'
+            Add-Result -Name 'WSL' -Status Installed -Detail 'features already enabled'
+            return $true
+        }
+
+        Write-Status "[+] [WSL] enabled $($pending -join ', '); reboot via Complete-Stage" 'Green'
+        Add-Result -Name 'WSL' -Status Installed -Detail "enabled: $($pending -join ', ')"
+        return $true
+    } catch {
+        Write-Status "[!] [WSL] feature enable failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'WSL' -Status Failed -Detail $_.Exception.Message
+        return $false
+    }
+}
+
+function Get-WslDistroName {
+    $env:WSL_UTF8 = '1'
+    $names = @()
+    try {
+        $names = @(wsl -l -q 2>$null | ForEach-Object { $_.Trim() } | Where-Object {
+            $_ -and $_ -notmatch 'Windows Subsystem|^NAME'
+        })
+    } catch {}
+    if (-not $names) { return $null }
+    $ubuntu = $names | Where-Object { $_ -match '^Ubuntu' } | Select-Object -First 1
+    if ($ubuntu) { return $ubuntu }
+    return $names[0]
+}
+
+function Invoke-WslRoot {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Distro,
+        [Parameter(Mandatory)]
+        [string]$Bash
+    )
+    $env:WSL_UTF8 = '1'
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        wsl -d $Distro -u root -- bash -lc $Bash
+        return $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
+function Complete-Wsl {
+    # After Stage 1 reboot: Ubuntu (no OOBE prompt), attacker user + password, apt tools.
+    Write-Status "[-] [WSL] finishing install (default v2 + Ubuntu)" 'Cyan'
+    try {
+        $env:WSL_UTF8 = '1'
+        if (-not (Get-Command wsl -ErrorAction SilentlyContinue)) {
+            Write-Status "[!] [WSL] wsl.exe not on PATH after feature reboot" 'Yellow'
+            Add-Result -Name 'WSL distro' -Status Failed -Detail 'wsl.exe not on PATH'
+            return $false
+        }
+
+        Invoke-NativeQuiet { wsl --update *>$null }
+        Invoke-NativeQuiet { wsl --set-default-version 2 *>$null }
+
+        $distro = Get-WslDistroName
+        if (-not $distro) {
+            Write-Status "[-] [WSL] installing Ubuntu (no launch)" 'Cyan'
+            Invoke-NativeQuiet { wsl --install -d Ubuntu --no-launch *>$null }
+            if ($LASTEXITCODE -ne 0) {
+                Write-Status "[!] [WSL] Ubuntu install failed (exit $LASTEXITCODE)" 'Yellow'
+                Add-Result -Name 'WSL distro' -Status Failed -Detail "wsl --install -d Ubuntu (exit $LASTEXITCODE)"
+                return $false
+            }
+            $distro = Get-WslDistroName
+            if (-not $distro) { $distro = 'Ubuntu' }
+        } else {
+            Write-Status "[+] [WSL] distro already present ($distro)" 'DarkGray'
+        }
+
+        # Skip the interactive UNIX username/password OOBE; install as root.
+        $ubuntuExe = @('ubuntu.exe', 'ubuntu2404.exe', 'ubuntu2204.exe', 'ubuntu2004.exe') |
+            ForEach-Object { Get-Command $_ -ErrorAction SilentlyContinue } |
+            Select-Object -First 1
+        if ($ubuntuExe) {
+            Invoke-NativeQuiet { & $ubuntuExe.Source install --root *>$null }
+        }
+
+        $user = $script:AttackerUsername
+        $pass = $script:AttackerPassword
+        if (-not $user) { $user = 'attacker' }
+        if ([string]::IsNullOrWhiteSpace($pass)) {
+            Write-Status "[!] [WSL] AttackerPassword unset - cannot set Linux password" 'Yellow'
+            Add-Result -Name 'WSL user' -Status Failed -Detail 'AttackerPassword unset'
+            return $false
+        }
+
+        $userQ = $user -replace "'", "'\''"
+        $passQ = $pass -replace "'", "'\''"
+        $userSetup = @"
+set -e
+id '$userQ' >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo '$userQ'
+echo '${userQ}:${passQ}' | chpasswd
+printf '%s ALL=(ALL) NOPASSWD:ALL\n' '$userQ' > /etc/sudoers.d/$userQ
+chmod 440 /etc/sudoers.d/$userQ
+printf '[user]\ndefault=%s\n' '$userQ' > /etc/wsl.conf
+"@
+        Write-Status "[-] [WSL] creating user $user (no prompt)" 'Cyan'
+        $userExit = Invoke-WslRoot -Distro $distro -Bash $userSetup
+        if ($userExit -ne 0) {
+            Write-Status "[!] [WSL] user setup failed (exit $userExit)" 'Yellow'
+            Add-Result -Name 'WSL user' -Status Failed -Detail "exit $userExit"
+            return $false
+        }
+        Write-Status "[+] [WSL] user $user set (password from AttackerPassword)" 'Green'
+        Add-Result -Name 'WSL user' -Status Installed -Detail "$user (default user)"
+
+        $packageNames = @(Get-WslPackageList)
+        if ($packageNames.Count -eq 0) {
+            Write-Status "[!] [WSL] wsl_packages.json has no enabled packages" 'Yellow'
+            Add-Result -Name 'WSL tools' -Status Skipped -Detail 'empty catalog'
+            return $true
+        }
+        $packages = $packageNames -join ' '
+        Write-Status "[-] [WSL] apt-get install $($packageNames.Count) packages from wsl_packages.json" 'Cyan'
+        $pkgSetup = @"
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y $packages
+"@
+        $pkgExit = Invoke-WslRoot -Distro $distro -Bash $pkgSetup
+        if ($pkgExit -ne 0) {
+            Write-Status "[!] [WSL] apt install failed (exit $pkgExit)" 'Yellow'
+            Add-Result -Name 'WSL tools' -Status Failed -Detail "apt-get (exit $pkgExit)"
+            return $false
+        }
+
+        Write-Status "[+] [WSL] Ubuntu + tools ready ($distro)" 'Green'
+        Add-Result -Name 'WSL distro' -Status Installed -Detail "$distro, default version 2"
+        Add-Result -Name 'WSL tools' -Status Installed -Detail 'apt baseline'
+        return $true
+    } catch {
+        Write-Status "[!] [WSL] finish failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'WSL distro' -Status Failed -Detail $_.Exception.Message
+        return $false
+    }
+}
