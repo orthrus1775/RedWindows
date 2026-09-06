@@ -511,14 +511,42 @@ function Install-Wsl {
     }
 }
 
+function Test-WslFeaturesEnabled {
+    $needed = @(
+        'Microsoft-Windows-Subsystem-Linux',
+        'VirtualMachinePlatform'
+    )
+    foreach ($name in $needed) {
+        $feature = Get-WindowsOptionalFeature -Online -FeatureName $name -ErrorAction SilentlyContinue
+        if (-not $feature -or $feature.State -ne 'Enabled') {
+            return $false
+        }
+    }
+    return $true
+}
+
+function Test-WslCommandReady {
+    # Inbox stub (features off / pre-reboot) only knows --install and --list.
+    $help = Get-WslHelpText
+    return ($help -match '--set-default-version' -or $help -match '--status' -or $help -match '--update')
+}
+
 function Get-WslDistroName {
     $env:WSL_UTF8 = '1'
+    $help = Get-WslHelpText
+    $listArgs = @('--list')
+    if ($help -match '--quiet' -or $help -match '\s-q\b') {
+        $listArgs = @('-l', '-q')
+    }
     $names = @()
     try {
-        $names = @(wsl -l -q 2>$null | ForEach-Object {
-            ($_ -replace "`0", '').Trim()
+        $names = @(& wsl.exe @listArgs 2>$null | ForEach-Object {
+            $line = ($_ -replace "`0", '').Trim()
+            $line = $line -replace '^\*\s*', ''
+            $line = $line -replace '\s*\(Default\)\s*$', ''
+            $line.Trim()
         } | Where-Object {
-            $_ -and $_ -notmatch 'Windows Subsystem|^NAME'
+            $_ -and $_ -notmatch 'Windows Subsystem|^NAME|^Copyright|^Usage:|^Arguments:|^Options:|^Examples:|^To view|^--'
         })
     } catch {}
     if (-not $names) { return $null }
@@ -639,30 +667,24 @@ function Get-WslUbuntuAppxPath {
     return $null
 }
 
-function Install-WslKernelUpdate {
-    # Never call bare `wsl --update` — inbox WSL waits on Microsoft Store forever.
-    Write-Status "[-] [WSL] wsl --update --web-download" 'Cyan'
-    $result = Invoke-WslExe -ArgumentList @('--update', '--web-download') -TimeoutSec 180
-    if ($result -is [System.Array]) {
-        $result = @($result | Where-Object { $_ -is [pscustomobject] -and $null -ne $_.ExitCode })[-1]
-    }
-    $code = 1
-    if ($result) { $code = [int]$result.ExitCode }
-    if ($code -eq 0) { return $true }
-    if ($code -ne -2) {
-        Write-WslFailure -Label 'wsl --update --web-download' -ExitCode $code -Output $result.Output
-    }
-
+function Install-WslKernelMsi {
+    # Proven on this image: curl the kernel MSI and msiexec it. Do not call
+    # `wsl --update` — after reboot the flag exists and talks to the Store forever.
     $msiUrl = 'https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi'
     $msi = Join-Path $script:DlRoot 'wsl_update_x64.msi'
     try {
-        Write-Status "[-] [WSL] downloading WSL2 kernel MSI" 'Cyan'
-        if (-not (Get-RemoteFile -Url $msiUrl -Destination $msi)) {
-            throw 'kernel MSI download failed'
+        Write-Status "[-] [WSL] installing WSL2 kernel MSI" 'Cyan'
+        $haveMsi = (Test-Path -LiteralPath $msi) -and ((Get-Item -LiteralPath $msi).Length -gt 1MB)
+        if (-not $haveMsi) {
+            if (-not (Get-RemoteFile -Url $msiUrl -Destination $msi)) {
+                throw 'kernel MSI download failed'
+            }
+        } else {
+            Write-Status "[+] [WSL] reusing kernel MSI ($msi)" 'DarkGray'
         }
         $proc = Start-Process -FilePath msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart" -Wait -PassThru
         if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
-            Write-Status "[+] [WSL] kernel MSI installed" 'Green'
+            Write-Status "[+] [WSL] kernel MSI installed (exit $($proc.ExitCode))" 'Green'
             return $true
         }
         Write-Status "[!] [WSL] kernel MSI exit $($proc.ExitCode)" 'Yellow'
@@ -670,6 +692,10 @@ function Install-WslKernelUpdate {
         Write-Status "[!] [WSL] kernel MSI failed: $($_.Exception.Message)" 'Yellow'
     }
     return $false
+}
+
+function Install-WslKernelUpdate {
+    return [bool](Install-WslKernelMsi)
 }
 
 function Install-WslUbuntuAppx {
@@ -692,6 +718,10 @@ function Install-WslUbuntuAppx {
         Add-AppxPackage -Path $download -ErrorAction Stop
         return $download
     } catch {
+        if (Get-UbuntuWslExe) {
+            Write-Status "[+] [WSL] Ubuntu appx already present" 'DarkGray'
+            return $download
+        }
         Write-Status "[-] [WSL] appx direct add failed, trying zip extract" 'DarkGray'
     }
 
@@ -713,60 +743,36 @@ function Install-WslUbuntuAppx {
 function Register-WslUbuntu {
     if (Get-WslDistroName) { return $true }
 
-    $appx = Get-WslUbuntuAppxPath
-    $help = Get-WslHelpText
-    if ($appx -and $help -match '--from-file') {
-        $fromArgs = [System.Collections.Generic.List[string]]@('--install', '--from-file', $appx)
-        if ($help -match '--no-launch') { [void]$fromArgs.Add('--no-launch') }
-        Write-Status "[-] [WSL] wsl $($fromArgs -join ' ')" 'Cyan'
-        $result = Invoke-WslExe -ArgumentList @($fromArgs.ToArray()) -TimeoutSec 600
-        if (Get-WslDistroName) { return $true }
-        Write-WslFailure -Label "wsl --install --from-file" -ExitCode $result.ExitCode -Output $result.Output
-    }
-
     $ubuntuExe = Get-UbuntuWslExe
-    if ($ubuntuExe) {
-        Write-Status "[-] [WSL] $($ubuntuExe.Name) install --root" 'Cyan'
-        $prev = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        try {
-            & $ubuntuExe.Source install --root 2>&1 | Out-Host
-        } finally {
-            $ErrorActionPreference = $prev
-        }
-        if (Get-WslDistroName) { return $true }
-        Write-Status "[!] [WSL] ubuntu install --root did not register a distro (exit $LASTEXITCODE)" 'Yellow'
-    }
+    if (-not $ubuntuExe) { return $false }
 
+    $label = Split-Path -Path $ubuntuExe.Source -Leaf
+    Write-Status "[-] [WSL] $label install --root" 'Cyan'
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $ubuntuExe.Source install --root 2>&1 | Out-Host
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+    if (Get-WslDistroName) { return $true }
+    Write-Status "[!] [WSL] $label install --root did not register a distro (exit $LASTEXITCODE)" 'Yellow'
     return $false
 }
 
 function Install-WslUbuntuDistro {
     if (Test-WslUbuntuPresent) { return $true }
 
-    $help = Get-WslHelpText
-    $attempts = New-Object System.Collections.Generic.List[object]
-    # Store-backed --install hangs on this image. Only try CDN downloads.
-    if ($help -match '--web-download' -and $help -match '--no-launch') {
-        $attempts.Add([string[]]@('--install', '-d', 'Ubuntu-22.04', '--web-download', '--no-launch'))
-        $attempts.Add([string[]]@('--install', '-d', 'Ubuntu', '--web-download', '--no-launch'))
-    }
-
-    foreach ($wslArgs in $attempts) {
-        Write-Status "[-] [WSL] wsl $($wslArgs -join ' ')" 'Cyan'
-        $result = Invoke-WslExe -ArgumentList $wslArgs -TimeoutSec 600
-        if (Get-WslDistroName) { return $true }
-        Write-WslFailure -Label "wsl $($wslArgs -join ' ')" -ExitCode $result.ExitCode -Output $result.Output
-    }
-
+    # Proven on this image: Add-AppxPackage aka.ms/wslubuntu2204, then
+    # ubuntu2204.exe install --root. Do not call wsl --install (Store / inbox).
     try {
         $null = Install-WslUbuntuAppx
     } catch {
         Write-Status "[!] [WSL] Ubuntu appx failed: $($_.Exception.Message)" 'Yellow'
+        return $false
     }
 
-    if (Register-WslUbuntu) { return $true }
-    return $false
+    return [bool](Register-WslUbuntu)
 }
 
 function Invoke-WslRoot {
@@ -802,8 +808,23 @@ function Complete-Wsl {
             return $false
         }
 
-        $null = Install-WslKernelUpdate
-        Invoke-NativeQuiet { wsl --set-default-version 2 *>$null }
+        if (-not (Test-WslFeaturesEnabled)) {
+            Write-Status "[-] [WSL] optional features not enabled - enabling (reboot required)" 'Cyan'
+            $null = Install-Wsl
+            Add-Result -Name 'WSL distro' -Status Failed -Detail 'WSL features enabled; reboot required'
+            return $false
+        }
+        if (-not (Test-WslCommandReady)) {
+            Write-Status "[!] [WSL] features on but wsl.exe is still the inbox stub - reboot required" 'Yellow'
+            Add-Result -Name 'WSL distro' -Status Failed -Detail 'wsl.exe inbox stub; reboot required'
+            return $false
+        }
+
+        $null = Install-WslKernelMsi
+        $help = Get-WslHelpText
+        if ($help -match '--set-default-version') {
+            Invoke-NativeQuiet { wsl --set-default-version 2 *>$null }
+        }
 
         $distro = Get-WslDistroName
         if ($distro) {

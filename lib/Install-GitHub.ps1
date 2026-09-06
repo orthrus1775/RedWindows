@@ -111,7 +111,7 @@ function Get-RemoteFile {
             $prev = $ErrorActionPreference
             $ErrorActionPreference = 'Continue'
             try {
-                & $curl.Source -L --fail --retry 3 --retry-delay 2 -o $Destination $Url
+                & $curl.Source -L --fail --retry 3 --retry-delay 2 --progress-bar -o $Destination $Url
                 if ($LASTEXITCODE -ne 0) {
                     throw "curl.exe exit $LASTEXITCODE"
                 }
