@@ -525,6 +525,174 @@ function Get-WslDistroName {
     return $names[0]
 }
 
+function Get-WslHelpText {
+    $env:WSL_UTF8 = '1'
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        return (wsl.exe --help 2>&1 | Out-String)
+    } catch {
+        return ''
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
+function Invoke-WslExe {
+    param(
+        [Parameter(Mandatory)]
+        [string[]]$ArgumentList
+    )
+    $env:WSL_UTF8 = '1'
+    $prev = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & wsl.exe @ArgumentList 2>&1 | Out-String
+        return [pscustomobject]@{
+            ExitCode = $LASTEXITCODE
+            Output   = $output
+        }
+    } finally {
+        $ErrorActionPreference = $prev
+    }
+}
+
+function Write-WslFailure {
+    param(
+        [string]$Label,
+        [int]$ExitCode,
+        [string]$Output
+    )
+    $snippet = ($Output -replace '\s+', ' ').Trim()
+    if (-not $snippet) { $snippet = '(no output)' }
+    if ($snippet.Length -gt 300) { $snippet = $snippet.Substring(0, 300) + '...' }
+    Write-Status "[!] [WSL] $Label failed (exit $ExitCode): $snippet" 'Yellow'
+}
+
+function Get-UbuntuWslExe {
+    $names = @('ubuntu.exe', 'ubuntu2404.exe', 'ubuntu2204.exe', 'ubuntu2004.exe')
+    foreach ($name in $names) {
+        $cmd = Get-Command $name -ErrorAction SilentlyContinue
+        if ($cmd) { return $cmd }
+    }
+    $apps = Join-Path $env:LOCALAPPDATA 'Microsoft\WindowsApps'
+    foreach ($name in $names) {
+        $path = Join-Path $apps $name
+        if (Test-Path -LiteralPath $path) {
+            return [pscustomobject]@{ Source = $path }
+        }
+    }
+    return $null
+}
+
+function Test-WslUbuntuPresent {
+    if (Get-WslDistroName) { return $true }
+    if (Get-UbuntuWslExe) { return $true }
+    return $false
+}
+
+function Install-WslKernelUpdate {
+    $help = Get-WslHelpText
+    $updateArgs = @('--update')
+    if ($help -match '--web-download') {
+        $updateArgs = @('--update', '--web-download')
+    }
+
+    Write-Status "[-] [WSL] wsl $($updateArgs -join ' ')" 'Cyan'
+    $result = Invoke-WslExe -ArgumentList $updateArgs
+    if ($result.ExitCode -eq 0) { return $true }
+
+    $msiUrl = 'https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi'
+    $msi = Join-Path $script:DlRoot 'wsl_update_x64.msi'
+    try {
+        Write-Status "[-] [WSL] downloading WSL2 kernel MSI" 'Cyan'
+        Invoke-WebRequest -Uri $msiUrl -OutFile $msi -UseBasicParsing
+        $proc = Start-Process -FilePath msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart" -Wait -PassThru
+        if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
+            Write-Status "[+] [WSL] kernel MSI installed" 'Green'
+            return $true
+        }
+        Write-Status "[!] [WSL] kernel MSI exit $($proc.ExitCode)" 'Yellow'
+    } catch {
+        Write-Status "[!] [WSL] kernel MSI failed: $($_.Exception.Message)" 'Yellow'
+    }
+    return $false
+}
+
+function Install-WslUbuntuAppx {
+    $url = 'https://aka.ms/wslubuntu2204'
+    $download = Join-Path $script:DlRoot 'Ubuntu2204.appx'
+    Write-Status "[-] [WSL] downloading Ubuntu 22.04 from aka.ms" 'Cyan'
+    Invoke-WebRequest -Uri $url -OutFile $download -UseBasicParsing
+
+    try {
+        Add-AppxPackage -Path $download -ErrorAction Stop
+        return
+    } catch {
+        Write-Status "[-] [WSL] appx direct add failed, trying zip extract" 'DarkGray'
+    }
+
+    $extract = Join-Path $script:DlRoot 'Ubuntu2204'
+    if (Test-Path -LiteralPath $extract) {
+        Remove-Item -LiteralPath $extract -Recurse -Force
+    }
+    Expand-Archive -Path $download -DestinationPath $extract -Force
+    $packages = @(Get-ChildItem -LiteralPath $extract -Recurse -Include *.appx, *.appxbundle, *.msixbundle)
+    if ($packages.Count -eq 0) {
+        throw "Ubuntu download was not an appx or zip of appx files"
+    }
+    foreach ($pkg in $packages) {
+        Add-AppxPackage -Path $pkg.FullName -ErrorAction Stop
+    }
+}
+
+function Install-WslUbuntuDistro {
+    if (Test-WslUbuntuPresent) { return $true }
+
+    $help = Get-WslHelpText
+    $web = $help -match '--web-download'
+    $noLaunch = $help -match '--no-launch'
+    $attempts = New-Object System.Collections.Generic.List[object]
+    if ($web -and $noLaunch) {
+        $attempts.Add([string[]]@('--install', '-d', 'Ubuntu-22.04', '--web-download', '--no-launch'))
+        $attempts.Add([string[]]@('--install', '-d', 'Ubuntu', '--web-download', '--no-launch'))
+    } elseif ($noLaunch) {
+        $attempts.Add([string[]]@('--install', '-d', 'Ubuntu-22.04', '--no-launch'))
+        $attempts.Add([string[]]@('--install', '-d', 'Ubuntu', '--no-launch'))
+    }
+
+    foreach ($wslArgs in $attempts) {
+        Write-Status "[-] [WSL] wsl $($wslArgs -join ' ')" 'Cyan'
+        $result = Invoke-WslExe -ArgumentList $wslArgs
+        if ($result.ExitCode -eq 0 -or (Test-WslUbuntuPresent)) {
+            return $true
+        }
+        Write-WslFailure -Label "wsl $($wslArgs -join ' ')" -ExitCode $result.ExitCode -Output $result.Output
+    }
+
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        Write-Status "[-] [WSL] winget Canonical.Ubuntu.22.04" 'Cyan'
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            winget install --id Canonical.Ubuntu.22.04 -e --accept-source-agreements --accept-package-agreements | Out-Host
+        } finally {
+            $ErrorActionPreference = $prev
+        }
+        if (Test-WslUbuntuPresent) { return $true }
+        Write-Status "[!] [WSL] winget Ubuntu 22.04 failed (exit $LASTEXITCODE)" 'Yellow'
+    }
+
+    try {
+        Install-WslUbuntuAppx
+        if (Test-WslUbuntuPresent) { return $true }
+    } catch {
+        Write-Status "[!] [WSL] Ubuntu appx failed: $($_.Exception.Message)" 'Yellow'
+    }
+
+    return $false
+}
+
 function Invoke-WslRoot {
     param(
         [Parameter(Mandatory)]
@@ -554,31 +722,30 @@ function Complete-Wsl {
             return $false
         }
 
-        Invoke-NativeQuiet { wsl --update *>$null }
+        $null = Install-WslKernelUpdate
         Invoke-NativeQuiet { wsl --set-default-version 2 *>$null }
 
         $distro = Get-WslDistroName
-        if (-not $distro) {
-            Write-Status "[-] [WSL] installing Ubuntu (no launch)" 'Cyan'
-            Invoke-NativeQuiet { wsl --install -d Ubuntu --no-launch *>$null }
-            if ($LASTEXITCODE -ne 0) {
-                Write-Status "[!] [WSL] Ubuntu install failed (exit $LASTEXITCODE)" 'Yellow'
-                Add-Result -Name 'WSL distro' -Status Failed -Detail "wsl --install -d Ubuntu (exit $LASTEXITCODE)"
+        if ($distro) {
+            Write-Status "[+] [WSL] distro already present ($distro)" 'DarkGray'
+        } else {
+            Write-Status "[-] [WSL] installing Ubuntu (no Store / no OOBE)" 'Cyan'
+            if (-not (Install-WslUbuntuDistro)) {
+                Write-Status "[!] [WSL] Ubuntu install failed (no distro after fallbacks)" 'Yellow'
+                Add-Result -Name 'WSL distro' -Status Failed -Detail 'Ubuntu install failed (wsl/winget/appx)'
                 return $false
             }
-            $distro = Get-WslDistroName
-            if (-not $distro) { $distro = 'Ubuntu' }
-        } else {
-            Write-Status "[+] [WSL] distro already present ($distro)" 'DarkGray'
         }
 
-        # Skip the interactive UNIX username/password OOBE; install as root.
-        $ubuntuExe = @('ubuntu.exe', 'ubuntu2404.exe', 'ubuntu2204.exe', 'ubuntu2004.exe') |
-            ForEach-Object { Get-Command $_ -ErrorAction SilentlyContinue } |
-            Select-Object -First 1
+        # --no-launch only drops the Appx; ubuntu.exe install --root registers the distro.
+        $ubuntuExe = Get-UbuntuWslExe
         if ($ubuntuExe) {
+            Write-Status "[-] [WSL] ubuntu install --root" 'Cyan'
             Invoke-NativeQuiet { & $ubuntuExe.Source install --root *>$null }
         }
+
+        $distro = Get-WslDistroName
+        if (-not $distro) { $distro = 'Ubuntu' }
 
         $user = $script:AttackerUsername
         $pass = $script:AttackerPassword
