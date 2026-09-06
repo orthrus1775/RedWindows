@@ -525,13 +525,35 @@ function Test-WslFeaturesEnabled {
     return $true
 }
 
+function Get-WslExePath {
+    # PATH often hits WindowsApps\wsl.exe (Store stub: --install / --list only)
+    # before System32. Interactive shells started in C:\Windows\system32 hide that.
+    foreach ($path in @(
+        (Join-Path $env:SystemRoot 'System32\wsl.exe'),
+        (Join-Path $env:SystemRoot 'Sysnative\wsl.exe')
+    )) {
+        if (Test-Path -LiteralPath $path) { return $path }
+    }
+    return $null
+}
+
+function Get-WslText {
+    param($Value)
+    return (($Value | Out-String) -replace "`0", '')
+}
+
 function Test-WslCommandReady {
-    # Inbox stub (features off / pre-reboot) only knows --install and --list.
+    # Inbox / WindowsApps stub only knows --install and --list.
     $help = Get-WslHelpText
-    return ($help -match '--set-default-version' -or $help -match '--status' -or $help -match '--update')
+    if ($help -match '--set-default-version' -or $help -match '--status' -or $help -match '--update') {
+        return $true
+    }
+    return [bool](Get-WslDistroName)
 }
 
 function Get-WslDistroName {
+    $wsl = Get-WslExePath
+    if (-not $wsl) { return $null }
     $env:WSL_UTF8 = '1'
     $help = Get-WslHelpText
     $listArgs = @('--list')
@@ -540,8 +562,8 @@ function Get-WslDistroName {
     }
     $names = @()
     try {
-        $names = @(& wsl.exe @listArgs 2>$null | ForEach-Object {
-            $line = ($_ -replace "`0", '').Trim()
+        $names = @(& $wsl @listArgs 2>$null | ForEach-Object {
+            $line = (Get-WslText $_).Trim()
             $line = $line -replace '^\*\s*', ''
             $line = $line -replace '\s*\(Default\)\s*$', ''
             $line.Trim()
@@ -556,11 +578,13 @@ function Get-WslDistroName {
 }
 
 function Get-WslHelpText {
+    $wsl = Get-WslExePath
+    if (-not $wsl) { return '' }
     $env:WSL_UTF8 = '1'
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        return (wsl.exe --help 2>&1 | Out-String)
+        return (Get-WslText (& $wsl --help 2>&1))
     } catch {
         return ''
     } finally {
@@ -575,11 +599,15 @@ function Invoke-WslExe {
         [int]$TimeoutSec = 0
     )
     $env:WSL_UTF8 = '1'
+    $wsl = Get-WslExePath
+    if (-not $wsl) {
+        return [pscustomobject]@{ ExitCode = 1; Output = 'wsl.exe not found in System32' }
+    }
     if ($TimeoutSec -le 0) {
         $prev = $ErrorActionPreference
         $ErrorActionPreference = 'Continue'
         try {
-            $output = & wsl.exe @ArgumentList 2>&1 | Out-String
+            $output = Get-WslText (& $wsl @ArgumentList 2>&1)
             return [pscustomobject]@{
                 ExitCode = $LASTEXITCODE
                 Output   = $output
@@ -592,7 +620,7 @@ function Invoke-WslExe {
     $outFile = [System.IO.Path]::GetTempFileName()
     $errFile = [System.IO.Path]::GetTempFileName()
     try {
-        $proc = Start-Process -FilePath "$env:SystemRoot\System32\wsl.exe" -ArgumentList $ArgumentList `
+        $proc = Start-Process -FilePath $wsl -ArgumentList $ArgumentList `
             -PassThru -NoNewWindow -Wait:$false `
             -RedirectStandardOutput $outFile -RedirectStandardError $errFile
         if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
@@ -783,12 +811,14 @@ function Invoke-WslRoot {
         [string]$Bash
     )
     $env:WSL_UTF8 = '1'
+    $wsl = Get-WslExePath
+    if (-not $wsl) { return 1 }
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
         # Out-Host so apt/wsl stdout is not the function return value.
         # Callers used `$exit -ne 0` on that leak, which is true for any log line.
-        & wsl.exe -d $Distro -u root -- bash -lc $Bash 2>&1 | Out-Host
+        & $wsl -d $Distro -u root -- bash -lc $Bash 2>&1 | Out-Host
         $code = $LASTEXITCODE
         if ($null -eq $code) { return 0 }
         return [int]$code
@@ -802,9 +832,10 @@ function Complete-Wsl {
     Write-Status "[-] [WSL] finishing install (default v2 + Ubuntu)" 'Cyan'
     try {
         $env:WSL_UTF8 = '1'
-        if (-not (Get-Command wsl -ErrorAction SilentlyContinue)) {
-            Write-Status "[!] [WSL] wsl.exe not on PATH after feature reboot" 'Yellow'
-            Add-Result -Name 'WSL distro' -Status Failed -Detail 'wsl.exe not on PATH'
+        $wsl = Get-WslExePath
+        if (-not $wsl) {
+            Write-Status "[!] [WSL] System32\wsl.exe missing" 'Yellow'
+            Add-Result -Name 'WSL distro' -Status Failed -Detail 'System32 wsl.exe missing'
             return $false
         }
 
@@ -823,7 +854,9 @@ function Complete-Wsl {
         $null = Install-WslKernelMsi
         $help = Get-WslHelpText
         if ($help -match '--set-default-version') {
-            Invoke-NativeQuiet { wsl --set-default-version 2 *>$null }
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try { & $wsl --set-default-version 2 2>&1 | Out-Host } finally { $ErrorActionPreference = $prev }
         }
 
         $distro = Get-WslDistroName
