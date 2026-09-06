@@ -515,7 +515,9 @@ function Get-WslDistroName {
     $env:WSL_UTF8 = '1'
     $names = @()
     try {
-        $names = @(wsl -l -q 2>$null | ForEach-Object { $_.Trim() } | Where-Object {
+        $names = @(wsl -l -q 2>$null | ForEach-Object {
+            ($_ -replace "`0", '').Trim()
+        } | Where-Object {
             $_ -and $_ -notmatch 'Windows Subsystem|^NAME'
         })
     } catch {}
@@ -603,7 +605,9 @@ function Write-WslFailure {
 }
 
 function Get-UbuntuWslExe {
-    $names = @('ubuntu.exe', 'ubuntu2404.exe', 'ubuntu2204.exe', 'ubuntu2004.exe')
+    # Prefer the versioned launcher we actually downloaded. ubuntu.exe is often a
+    # 0-byte Store alias that exits immediately if that package is not installed.
+    $names = @('ubuntu2204.exe', 'ubuntu2404.exe', 'ubuntu2004.exe', 'ubuntu.exe')
     foreach ($name in $names) {
         $cmd = Get-Command $name -ErrorAction SilentlyContinue
         if ($cmd) { return $cmd }
@@ -619,9 +623,20 @@ function Get-UbuntuWslExe {
 }
 
 function Test-WslUbuntuPresent {
-    if (Get-WslDistroName) { return $true }
-    if (Get-UbuntuWslExe) { return $true }
-    return $false
+    return [bool](Get-WslDistroName)
+}
+
+function Get-WslUbuntuAppxPath {
+    $candidates = @(
+        (Join-Path $script:DlRoot 'Ubuntu2204.appx'),
+        (Join-Path $env:TEMP 'Ubuntu2204.appx')
+    )
+    foreach ($path in $candidates) {
+        if ((Test-Path -LiteralPath $path) -and ((Get-Item -LiteralPath $path).Length -gt 50MB)) {
+            return $path
+        }
+    }
+    return $null
 }
 
 function Install-WslKernelUpdate {
@@ -660,14 +675,22 @@ function Install-WslKernelUpdate {
 function Install-WslUbuntuAppx {
     $url = 'https://aka.ms/wslubuntu2204'
     $download = Join-Path $script:DlRoot 'Ubuntu2204.appx'
-    Write-Status "[-] [WSL] downloading Ubuntu 22.04 from aka.ms" 'Cyan'
-    if (-not (Get-RemoteFile -Url $url -Destination $download)) {
-        throw 'Ubuntu 22.04 download failed'
+    $existing = Get-WslUbuntuAppxPath
+    if ($existing) {
+        if ($existing -ne $download) {
+            Copy-Item -LiteralPath $existing -Destination $download -Force
+        }
+        Write-Status "[+] [WSL] reusing Ubuntu 22.04 appx ($download)" 'DarkGray'
+    } else {
+        Write-Status "[-] [WSL] downloading Ubuntu 22.04 from aka.ms" 'Cyan'
+        if (-not (Get-RemoteFile -Url $url -Destination $download)) {
+            throw 'Ubuntu 22.04 download failed'
+        }
     }
 
     try {
         Add-AppxPackage -Path $download -ErrorAction Stop
-        return
+        return $download
     } catch {
         Write-Status "[-] [WSL] appx direct add failed, trying zip extract" 'DarkGray'
     }
@@ -684,6 +707,38 @@ function Install-WslUbuntuAppx {
     foreach ($pkg in $packages) {
         Add-AppxPackage -Path $pkg.FullName -ErrorAction Stop
     }
+    return $download
+}
+
+function Register-WslUbuntu {
+    if (Get-WslDistroName) { return $true }
+
+    $appx = Get-WslUbuntuAppxPath
+    $help = Get-WslHelpText
+    if ($appx -and $help -match '--from-file') {
+        $fromArgs = [System.Collections.Generic.List[string]]@('--install', '--from-file', $appx)
+        if ($help -match '--no-launch') { [void]$fromArgs.Add('--no-launch') }
+        Write-Status "[-] [WSL] wsl $($fromArgs -join ' ')" 'Cyan'
+        $result = Invoke-WslExe -ArgumentList @($fromArgs.ToArray()) -TimeoutSec 600
+        if (Get-WslDistroName) { return $true }
+        Write-WslFailure -Label "wsl --install --from-file" -ExitCode $result.ExitCode -Output $result.Output
+    }
+
+    $ubuntuExe = Get-UbuntuWslExe
+    if ($ubuntuExe) {
+        Write-Status "[-] [WSL] $($ubuntuExe.Name) install --root" 'Cyan'
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            & $ubuntuExe.Source install --root 2>&1 | Out-Host
+        } finally {
+            $ErrorActionPreference = $prev
+        }
+        if (Get-WslDistroName) { return $true }
+        Write-Status "[!] [WSL] ubuntu install --root did not register a distro (exit $LASTEXITCODE)" 'Yellow'
+    }
+
+    return $false
 }
 
 function Install-WslUbuntuDistro {
@@ -700,32 +755,17 @@ function Install-WslUbuntuDistro {
     foreach ($wslArgs in $attempts) {
         Write-Status "[-] [WSL] wsl $($wslArgs -join ' ')" 'Cyan'
         $result = Invoke-WslExe -ArgumentList $wslArgs -TimeoutSec 600
-        if ($result.ExitCode -eq 0 -or (Test-WslUbuntuPresent)) {
-            return $true
-        }
+        if (Get-WslDistroName) { return $true }
         Write-WslFailure -Label "wsl $($wslArgs -join ' ')" -ExitCode $result.ExitCode -Output $result.Output
     }
 
-    if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Write-Status "[-] [WSL] winget Canonical.Ubuntu.22.04" 'Cyan'
-        $prev = $ErrorActionPreference
-        $ErrorActionPreference = 'Continue'
-        try {
-            winget install --id Canonical.Ubuntu.22.04 -e --accept-source-agreements --accept-package-agreements | Out-Host
-        } finally {
-            $ErrorActionPreference = $prev
-        }
-        if (Test-WslUbuntuPresent) { return $true }
-        Write-Status "[!] [WSL] winget Ubuntu 22.04 failed (exit $LASTEXITCODE)" 'Yellow'
-    }
-
     try {
-        Install-WslUbuntuAppx
-        if (Test-WslUbuntuPresent) { return $true }
+        $null = Install-WslUbuntuAppx
     } catch {
         Write-Status "[!] [WSL] Ubuntu appx failed: $($_.Exception.Message)" 'Yellow'
     }
 
+    if (Register-WslUbuntu) { return $true }
     return $false
 }
 
@@ -777,15 +817,21 @@ function Complete-Wsl {
             }
         }
 
-        # --no-launch only drops the Appx; ubuntu.exe install --root registers the distro.
-        $ubuntuExe = Get-UbuntuWslExe
-        if ($ubuntuExe) {
-            Write-Status "[-] [WSL] ubuntu install --root" 'Cyan'
-            Invoke-NativeQuiet { & $ubuntuExe.Source install --root *>$null }
+        # Appx / --no-launch does not register a distro. Fail if wsl -l is still empty.
+        if (-not (Get-WslDistroName)) {
+            if (-not (Register-WslUbuntu)) {
+                Write-Status "[!] [WSL] Ubuntu package present but no distro registered" 'Yellow'
+                Add-Result -Name 'WSL distro' -Status Failed -Detail 'ubuntu install --root did not register a distro'
+                return $false
+            }
         }
 
         $distro = Get-WslDistroName
-        if (-not $distro) { $distro = 'Ubuntu' }
+        if (-not $distro) {
+            Write-Status "[!] [WSL] no distro name after register" 'Yellow'
+            Add-Result -Name 'WSL distro' -Status Failed -Detail 'wsl -l empty after Ubuntu install'
+            return $false
+        }
 
         $user = $script:AttackerUsername
         $pass = $script:AttackerPassword
