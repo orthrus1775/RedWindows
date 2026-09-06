@@ -542,13 +542,35 @@ function Get-WslText {
     return (($Value | Out-String) -replace "`0", '')
 }
 
+function Test-WslDistroNameToken {
+    param([string]$Name)
+    # Real names: Ubuntu, Ubuntu-22.04. Reject Store help / usage sentences.
+    return ($Name -match '^[A-Za-z][A-Za-z0-9._-]*$')
+}
+
+function ConvertTo-WslDistroNameToken {
+    param($Value)
+    $line = (Get-WslText $Value).Trim()
+    $line = $line -replace '^\*\s*', ''
+    $line = $line -replace '\s*\(Default\)\s*$', ''
+    $line = $line.Trim()
+    if (-not $line) { return $null }
+    if ($line -match 'Windows Subsystem|^NAME$|^Copyright|^Usage:|^Arguments:|^Options:|^Examples:|^To view|^Distributions can|^https?:|^The Windows|^WslRegister|^Please enable|^See https|^There is no') {
+        return $null
+    }
+    if (-not (Test-WslDistroNameToken $line)) { return $null }
+    return $line
+}
+
 function Get-WslDistroNamesFromRegistry {
     $root = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
     $names = @()
     try {
         if (Test-Path -LiteralPath $root) {
             $names = @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue | ForEach-Object {
-                (Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue).DistributionName
+                ConvertTo-WslDistroNameToken (
+                    (Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue).DistributionName
+                )
             } | Where-Object { $_ })
         }
     } catch {}
@@ -558,28 +580,23 @@ function Get-WslDistroNamesFromRegistry {
 function Get-WslDistroName {
     $names = [System.Collections.Generic.List[string]]::new()
     foreach ($name in (Get-WslDistroNamesFromRegistry)) {
-        if ($name -and -not $names.Contains($name)) { [void]$names.Add($name) }
+        if (-not $names.Contains($name)) { [void]$names.Add($name) }
     }
 
     $wsl = Get-WslExePath
     if ($wsl) {
         $env:WSL_UTF8 = '1'
-        foreach ($listArgs in @(@('-l', '-q'), @('--list'))) {
-            try {
-                $listed = @(& $wsl @listArgs 2>$null | ForEach-Object {
-                    $line = (Get-WslText $_).Trim()
-                    $line = $line -replace '^\*\s*', ''
-                    $line = $line -replace '\s*\(Default\)\s*$', ''
-                    $line.Trim()
-                } | Where-Object {
-                    $_ -and $_ -notmatch 'Windows Subsystem|^NAME|^Copyright|^Usage:|^Arguments:|^Options:|^Examples:|^To view|^--'
-                })
-                foreach ($name in $listed) {
-                    if ($name -and -not $names.Contains($name)) { [void]$names.Add($name) }
-                }
-                if ($names.Count -gt 0) { break }
-            } catch {}
-        }
+        # --list is the command that worked on this image. Do not lead with
+        # `wsl -l -q` — older inbox wsl treats -q as unknown and prints the
+        # Store help line, which we used to treat as a distro name.
+        try {
+            $listed = @(& $wsl --list 2>$null | ForEach-Object {
+                ConvertTo-WslDistroNameToken $_
+            } | Where-Object { $_ })
+            foreach ($name in $listed) {
+                if (-not $names.Contains($name)) { [void]$names.Add($name) }
+            }
+        } catch {}
     }
 
     if ($names.Count -eq 0) { return $null }
@@ -852,8 +869,22 @@ function Complete-Wsl {
 
         $distro = Get-WslDistroName
         if ($distro) {
-            Write-Status "[+] [WSL] distro already present ($distro)" 'DarkGray'
-        } else {
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $probe = Get-WslText (& $wsl -d $distro -- echo ok 2>&1)
+                $probeCode = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $prev
+            }
+            if ($probeCode -ne 0) {
+                Write-Status "[!] [WSL] listed distro '$distro' is not usable: $probe" 'Yellow'
+                $distro = $null
+            } else {
+                Write-Status "[+] [WSL] distro already present ($distro)" 'DarkGray'
+            }
+        }
+        if (-not $distro) {
             Write-Status "[-] [WSL] installing Ubuntu (no Store / no OOBE)" 'Cyan'
             if (-not (Install-WslUbuntuDistro)) {
                 Write-Status "[!] [WSL] Ubuntu install failed (no distro after fallbacks)" 'Yellow'
