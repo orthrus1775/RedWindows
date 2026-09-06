@@ -526,14 +526,14 @@ function Test-WslFeaturesEnabled {
 }
 
 function Get-WslExePath {
-    # PATH often hits WindowsApps\wsl.exe (Store stub: --install / --list only)
-    # before System32. Interactive shells started in C:\Windows\system32 hide that.
-    foreach ($path in @(
-        (Join-Path $env:SystemRoot 'System32\wsl.exe'),
-        (Join-Path $env:SystemRoot 'Sysnative\wsl.exe')
-    )) {
-        if (Test-Path -LiteralPath $path) { return $path }
+    # Never use PATH: WindowsApps\wsl.exe is the Store stub (--install / --list only).
+    # 32-bit PowerShell must use Sysnative or it sees SysWOW64 instead of System32.
+    if (-not [Environment]::Is64BitProcess) {
+        $sysnative = Join-Path $env:SystemRoot 'Sysnative\wsl.exe'
+        if (Test-Path -LiteralPath $sysnative) { return $sysnative }
     }
+    $system32 = Join-Path $env:SystemRoot 'System32\wsl.exe'
+    if (Test-Path -LiteralPath $system32) { return $system32 }
     return $null
 }
 
@@ -542,54 +542,50 @@ function Get-WslText {
     return (($Value | Out-String) -replace "`0", '')
 }
 
-function Test-WslCommandReady {
-    # Inbox / WindowsApps stub only knows --install and --list.
-    $help = Get-WslHelpText
-    if ($help -match '--set-default-version' -or $help -match '--status' -or $help -match '--update') {
-        return $true
-    }
-    return [bool](Get-WslDistroName)
+function Get-WslDistroNamesFromRegistry {
+    $root = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Lxss'
+    $names = @()
+    try {
+        if (Test-Path -LiteralPath $root) {
+            $names = @(Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue | ForEach-Object {
+                (Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue).DistributionName
+            } | Where-Object { $_ })
+        }
+    } catch {}
+    return @($names)
 }
 
 function Get-WslDistroName {
-    $wsl = Get-WslExePath
-    if (-not $wsl) { return $null }
-    $env:WSL_UTF8 = '1'
-    $help = Get-WslHelpText
-    $listArgs = @('--list')
-    if ($help -match '--quiet' -or $help -match '\s-q\b') {
-        $listArgs = @('-l', '-q')
+    $names = [System.Collections.Generic.List[string]]::new()
+    foreach ($name in (Get-WslDistroNamesFromRegistry)) {
+        if ($name -and -not $names.Contains($name)) { [void]$names.Add($name) }
     }
-    $names = @()
-    try {
-        $names = @(& $wsl @listArgs 2>$null | ForEach-Object {
-            $line = (Get-WslText $_).Trim()
-            $line = $line -replace '^\*\s*', ''
-            $line = $line -replace '\s*\(Default\)\s*$', ''
-            $line.Trim()
-        } | Where-Object {
-            $_ -and $_ -notmatch 'Windows Subsystem|^NAME|^Copyright|^Usage:|^Arguments:|^Options:|^Examples:|^To view|^--'
-        })
-    } catch {}
-    if (-not $names) { return $null }
+
+    $wsl = Get-WslExePath
+    if ($wsl) {
+        $env:WSL_UTF8 = '1'
+        foreach ($listArgs in @(@('-l', '-q'), @('--list'))) {
+            try {
+                $listed = @(& $wsl @listArgs 2>$null | ForEach-Object {
+                    $line = (Get-WslText $_).Trim()
+                    $line = $line -replace '^\*\s*', ''
+                    $line = $line -replace '\s*\(Default\)\s*$', ''
+                    $line.Trim()
+                } | Where-Object {
+                    $_ -and $_ -notmatch 'Windows Subsystem|^NAME|^Copyright|^Usage:|^Arguments:|^Options:|^Examples:|^To view|^--'
+                })
+                foreach ($name in $listed) {
+                    if ($name -and -not $names.Contains($name)) { [void]$names.Add($name) }
+                }
+                if ($names.Count -gt 0) { break }
+            } catch {}
+        }
+    }
+
+    if ($names.Count -eq 0) { return $null }
     $ubuntu = $names | Where-Object { $_ -match '^Ubuntu' } | Select-Object -First 1
     if ($ubuntu) { return $ubuntu }
     return $names[0]
-}
-
-function Get-WslHelpText {
-    $wsl = Get-WslExePath
-    if (-not $wsl) { return '' }
-    $env:WSL_UTF8 = '1'
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        return (Get-WslText (& $wsl --help 2>&1))
-    } catch {
-        return ''
-    } finally {
-        $ErrorActionPreference = $prev
-    }
 }
 
 function Invoke-WslExe {
@@ -828,8 +824,10 @@ function Invoke-WslRoot {
 }
 
 function Complete-Wsl {
-    # After Stage 1 reboot: Ubuntu (no OOBE prompt), attacker user + password, apt tools.
-    Write-Status "[-] [WSL] finishing install (default v2 + Ubuntu)" 'Cyan'
+    # After Stage 1 reboot: kernel MSI, default v2, Appx + install --root, attacker, apt.
+    # Do not gate on `wsl --help` — WindowsApps stub / UTF-16 help looks like the inbox
+    # stub forever and a reboot does not change that.
+    Write-Status "[-] [WSL] finishing install via kernel MSI + Appx + install --root" 'Cyan'
     try {
         $env:WSL_UTF8 = '1'
         $wsl = Get-WslExePath
@@ -838,6 +836,7 @@ function Complete-Wsl {
             Add-Result -Name 'WSL distro' -Status Failed -Detail 'System32 wsl.exe missing'
             return $false
         }
+        Write-Status "[+] [WSL] using $wsl" 'DarkGray'
 
         if (-not (Test-WslFeaturesEnabled)) {
             Write-Status "[-] [WSL] optional features not enabled - enabling (reboot required)" 'Cyan'
@@ -845,19 +844,11 @@ function Complete-Wsl {
             Add-Result -Name 'WSL distro' -Status Failed -Detail 'WSL features enabled; reboot required'
             return $false
         }
-        if (-not (Test-WslCommandReady)) {
-            Write-Status "[!] [WSL] features on but wsl.exe is still the inbox stub - reboot required" 'Yellow'
-            Add-Result -Name 'WSL distro' -Status Failed -Detail 'wsl.exe inbox stub; reboot required'
-            return $false
-        }
 
         $null = Install-WslKernelMsi
-        $help = Get-WslHelpText
-        if ($help -match '--set-default-version') {
-            $prev = $ErrorActionPreference
-            $ErrorActionPreference = 'Continue'
-            try { & $wsl --set-default-version 2 2>&1 | Out-Host } finally { $ErrorActionPreference = $prev }
-        }
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try { & $wsl --set-default-version 2 2>&1 | Out-Host } finally { $ErrorActionPreference = $prev }
 
         $distro = Get-WslDistroName
         if ($distro) {
