@@ -106,7 +106,21 @@ function Get-RemoteFile {
 
     Write-Status "[-] [Download] $Url -> $Destination" 'Cyan'
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+        $curl = Get-Command curl.exe -ErrorAction SilentlyContinue
+        if ($curl) {
+            $prev = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                & $curl.Source -L --fail --retry 3 --retry-delay 2 -o $Destination $Url
+                if ($LASTEXITCODE -ne 0) {
+                    throw "curl.exe exit $LASTEXITCODE"
+                }
+            } finally {
+                $ErrorActionPreference = $prev
+            }
+        } else {
+            Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+        }
         Write-Status "[+] [Download] saved $Destination" 'Green'
     } catch {
         Write-Status "[!] [Download] failed: $($_.Exception.Message)" 'Yellow'

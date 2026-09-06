@@ -642,7 +642,9 @@ function Install-WslKernelUpdate {
     $msi = Join-Path $script:DlRoot 'wsl_update_x64.msi'
     try {
         Write-Status "[-] [WSL] downloading WSL2 kernel MSI" 'Cyan'
-        Invoke-WebRequest -Uri $msiUrl -OutFile $msi -UseBasicParsing
+        if (-not (Get-RemoteFile -Url $msiUrl -Destination $msi)) {
+            throw 'kernel MSI download failed'
+        }
         $proc = Start-Process -FilePath msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart" -Wait -PassThru
         if ($proc.ExitCode -eq 0 -or $proc.ExitCode -eq 3010) {
             Write-Status "[+] [WSL] kernel MSI installed" 'Green'
@@ -659,7 +661,9 @@ function Install-WslUbuntuAppx {
     $url = 'https://aka.ms/wslubuntu2204'
     $download = Join-Path $script:DlRoot 'Ubuntu2204.appx'
     Write-Status "[-] [WSL] downloading Ubuntu 22.04 from aka.ms" 'Cyan'
-    Invoke-WebRequest -Uri $url -OutFile $download -UseBasicParsing
+    if (-not (Get-RemoteFile -Url $url -Destination $download)) {
+        throw 'Ubuntu 22.04 download failed'
+    }
 
     try {
         Add-AppxPackage -Path $download -ErrorAction Stop
