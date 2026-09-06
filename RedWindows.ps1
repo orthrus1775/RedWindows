@@ -140,7 +140,7 @@ function Invoke-Stage2 {
 
     try {
         Disable-WindowsDefender
-        Complete-Wsl
+        $null = Complete-Wsl
 
         # Git needs a fresh session for PATH; keep it out of Install-AllPackages.
         $null = Install-WingetPackage 'Git'       'Git.Git'

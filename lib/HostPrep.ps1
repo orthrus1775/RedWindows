@@ -541,19 +541,52 @@ function Get-WslHelpText {
 function Invoke-WslExe {
     param(
         [Parameter(Mandatory)]
-        [string[]]$ArgumentList
+        [string[]]$ArgumentList,
+        [int]$TimeoutSec = 0
     )
     $env:WSL_UTF8 = '1'
-    $prev = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
+    if ($TimeoutSec -le 0) {
+        $prev = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        try {
+            $output = & wsl.exe @ArgumentList 2>&1 | Out-String
+            return [pscustomobject]@{
+                ExitCode = $LASTEXITCODE
+                Output   = $output
+            }
+        } finally {
+            $ErrorActionPreference = $prev
+        }
+    }
+
+    $outFile = [System.IO.Path]::GetTempFileName()
+    $errFile = [System.IO.Path]::GetTempFileName()
     try {
-        $output = & wsl.exe @ArgumentList 2>&1 | Out-String
+        $proc = Start-Process -FilePath "$env:SystemRoot\System32\wsl.exe" -ArgumentList $ArgumentList `
+            -PassThru -NoNewWindow -Wait:$false `
+            -RedirectStandardOutput $outFile -RedirectStandardError $errFile
+        if (-not $proc.WaitForExit($TimeoutSec * 1000)) {
+            Write-Status "[!] [WSL] timed out after ${TimeoutSec}s (wsl $($ArgumentList -join ' ')) - killing" 'Yellow'
+            try { Stop-Process -Id $proc.Id -Force -ErrorAction Stop } catch {}
+            $output = @(
+                Get-Content -LiteralPath $outFile -ErrorAction SilentlyContinue
+                Get-Content -LiteralPath $errFile -ErrorAction SilentlyContinue
+            ) -join "`n"
+            return [pscustomobject]@{
+                ExitCode = -2
+                Output   = "timed out after ${TimeoutSec}s`n$output"
+            }
+        }
+        $output = @(
+            Get-Content -LiteralPath $outFile -Raw -ErrorAction SilentlyContinue
+            Get-Content -LiteralPath $errFile -Raw -ErrorAction SilentlyContinue
+        ) -join "`n"
         return [pscustomobject]@{
-            ExitCode = $LASTEXITCODE
+            ExitCode = $proc.ExitCode
             Output   = $output
         }
     } finally {
-        $ErrorActionPreference = $prev
+        Remove-Item -LiteralPath $outFile, $errFile -Force -ErrorAction SilentlyContinue
     }
 }
 
@@ -592,15 +625,18 @@ function Test-WslUbuntuPresent {
 }
 
 function Install-WslKernelUpdate {
-    $help = Get-WslHelpText
-    $updateArgs = @('--update')
-    if ($help -match '--web-download') {
-        $updateArgs = @('--update', '--web-download')
+    # Never call bare `wsl --update` — inbox WSL waits on Microsoft Store forever.
+    Write-Status "[-] [WSL] wsl --update --web-download" 'Cyan'
+    $result = Invoke-WslExe -ArgumentList @('--update', '--web-download') -TimeoutSec 180
+    if ($result -is [System.Array]) {
+        $result = @($result | Where-Object { $_ -is [pscustomobject] -and $null -ne $_.ExitCode })[-1]
     }
-
-    Write-Status "[-] [WSL] wsl $($updateArgs -join ' ')" 'Cyan'
-    $result = Invoke-WslExe -ArgumentList $updateArgs
-    if ($result.ExitCode -eq 0) { return $true }
+    $code = 1
+    if ($result) { $code = [int]$result.ExitCode }
+    if ($code -eq 0) { return $true }
+    if ($code -ne -2) {
+        Write-WslFailure -Label 'wsl --update --web-download' -ExitCode $code -Output $result.Output
+    }
 
     $msiUrl = 'https://wslstorestorage.blob.core.windows.net/wslblob/wsl_update_x64.msi'
     $msi = Join-Path $script:DlRoot 'wsl_update_x64.msi'
@@ -650,20 +686,16 @@ function Install-WslUbuntuDistro {
     if (Test-WslUbuntuPresent) { return $true }
 
     $help = Get-WslHelpText
-    $web = $help -match '--web-download'
-    $noLaunch = $help -match '--no-launch'
     $attempts = New-Object System.Collections.Generic.List[object]
-    if ($web -and $noLaunch) {
+    # Store-backed --install hangs on this image. Only try CDN downloads.
+    if ($help -match '--web-download' -and $help -match '--no-launch') {
         $attempts.Add([string[]]@('--install', '-d', 'Ubuntu-22.04', '--web-download', '--no-launch'))
         $attempts.Add([string[]]@('--install', '-d', 'Ubuntu', '--web-download', '--no-launch'))
-    } elseif ($noLaunch) {
-        $attempts.Add([string[]]@('--install', '-d', 'Ubuntu-22.04', '--no-launch'))
-        $attempts.Add([string[]]@('--install', '-d', 'Ubuntu', '--no-launch'))
     }
 
     foreach ($wslArgs in $attempts) {
         Write-Status "[-] [WSL] wsl $($wslArgs -join ' ')" 'Cyan'
-        $result = Invoke-WslExe -ArgumentList $wslArgs
+        $result = Invoke-WslExe -ArgumentList $wslArgs -TimeoutSec 600
         if ($result.ExitCode -eq 0 -or (Test-WslUbuntuPresent)) {
             return $true
         }
@@ -704,8 +736,12 @@ function Invoke-WslRoot {
     $prev = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
     try {
-        wsl -d $Distro -u root -- bash -lc $Bash
-        return $LASTEXITCODE
+        # Out-Host so apt/wsl stdout is not the function return value.
+        # Callers used `$exit -ne 0` on that leak, which is true for any log line.
+        & wsl.exe -d $Distro -u root -- bash -lc $Bash 2>&1 | Out-Host
+        $code = $LASTEXITCODE
+        if ($null -eq $code) { return 0 }
+        return [int]$code
     } finally {
         $ErrorActionPreference = $prev
     }
