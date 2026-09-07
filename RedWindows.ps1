@@ -217,6 +217,7 @@ function Invoke-Stage5 {
     Set-SshCopyIdFunction
     Set-VaultEncProfileFunction
     Set-WindowsTerminalConfig
+    Set-TaskbarPins
     Set-TerminalHostsProfileFunction
     Set-Rebuild
     Clear-EventLogs

@@ -923,6 +923,125 @@ function Set-WindowsTerminalConfig {
     }
 }
 
+function Set-TaskbarPins {
+    # Win10: pin list is a layout XML. Explorer's pintotaskbar verb is gone.
+    Write-Status "[-] [Taskbar] pinning Windows Terminal, VS Code, File Explorer" 'Cyan'
+    try {
+        $user = $script:AttackerUsername
+        if (-not $user) { $user = 'attacker' }
+        $userHome = Join-Path 'C:\Users' $user
+        $local = Join-Path $userHome 'AppData\Local'
+        $roaming = Join-Path $userHome 'AppData\Roaming'
+        $pinDir = Join-Path $roaming 'Microsoft\Windows\Start Menu\Programs'
+
+        $codeCmd = Get-Command code.cmd -ErrorAction SilentlyContinue
+        $codeFromCmd = $null
+        if ($codeCmd) {
+            $maybe = Join-Path (Split-Path -Parent $codeCmd.Source) '..\Code.exe'
+            if (Test-Path -LiteralPath $maybe) {
+                $codeFromCmd = [System.IO.Path]::GetFullPath($maybe)
+            }
+        }
+
+        $wtExe = $null
+        $wtPkg = Get-AppxPackage -AllUsers -Name Microsoft.WindowsTerminal -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+        if ($wtPkg -and $wtPkg.InstallLocation) {
+            $wtCandidate = Join-Path $wtPkg.InstallLocation 'WindowsTerminal.exe'
+            if (Test-Path -LiteralPath $wtCandidate) { $wtExe = $wtCandidate }
+        }
+        if (-not $wtExe) {
+            $wtFound = Get-ChildItem -Path "$env:ProgramFiles\WindowsApps" -Filter 'WindowsTerminal.exe' -Recurse -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+            if ($wtFound) { $wtExe = $wtFound.FullName }
+        }
+
+        $wtLnkExisting = @(
+            (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Windows Terminal.lnk'),
+            (Join-Path $roaming 'Microsoft\Windows\Start Menu\Programs\Windows Terminal.lnk')
+        ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+
+        $desktopTargets = [ordered]@{
+            'Windows Terminal'   = @($wtExe)
+            'Visual Studio Code' = @(
+                (Join-Path $local 'Programs\Microsoft VS Code\Code.exe'),
+                'C:\Program Files\Microsoft VS Code\Code.exe',
+                $codeFromCmd
+            )
+            'File Explorer'      = @(
+                (Join-Path $env:WINDIR 'explorer.exe')
+            )
+        }
+
+        $pinXmlLines = [System.Collections.Generic.List[string]]::new()
+        $names = [System.Collections.Generic.List[string]]::new()
+        $wshell = New-Object -ComObject WScript.Shell
+        foreach ($name in $desktopTargets.Keys) {
+            if (-not (Test-Path -LiteralPath $pinDir)) {
+                New-Item -ItemType Directory -Path $pinDir -Force | Out-Null
+            }
+            $lnkPath = Join-Path $pinDir "$name.lnk"
+
+            if ($name -eq 'Windows Terminal' -and $wtLnkExisting) {
+                Copy-Item -LiteralPath $wtLnkExisting -Destination $lnkPath -Force
+            } else {
+                $exe = $desktopTargets[$name] | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+                if (-not $exe) {
+                    Write-Status "[!] [Taskbar] $name not found - skip" 'Yellow'
+                    continue
+                }
+                $lnk = $wshell.CreateShortcut($lnkPath)
+                $lnk.TargetPath = $exe
+                $lnk.IconLocation = "$exe,0"
+                $parent = Split-Path -Parent $exe
+                if ($parent) { $lnk.WorkingDirectory = $parent }
+                $lnk.Save()
+            }
+            [void]$pinXmlLines.Add("        <taskbar:DesktopApp DesktopApplicationLinkPath=`"$lnkPath`"/>")
+            [void]$names.Add($name)
+        }
+        if ($pinXmlLines.Count -eq 0) { throw 'no pin targets found' }
+
+        $pinXml = $pinXmlLines -join "`r`n"
+        $xml = @"
+<?xml version="1.0" encoding="utf-8"?>
+<LayoutModificationTemplate xmlns="http://schemas.microsoft.com/Start/2014/LayoutModification" xmlns:defaultlayout="http://schemas.microsoft.com/Start/2014/FullDefaultLayout" xmlns:start="http://schemas.microsoft.com/Start/2014/StartLayout" xmlns:taskbar="http://schemas.microsoft.com/Start/2014/TaskbarLayout" Version="1">
+  <CustomTaskbarLayoutCollection PinListPlacement="Replace">
+    <defaultlayout:TaskbarLayout>
+      <taskbar:TaskbarPinList>
+$pinXml
+      </taskbar:TaskbarPinList>
+    </defaultlayout:TaskbarLayout>
+  </CustomTaskbarLayoutCollection>
+</LayoutModificationTemplate>
+"@
+
+        $shellDir = Join-Path $local 'Microsoft\Windows\Shell'
+        New-Item -ItemType Directory -Path $shellDir -Force | Out-Null
+        $layoutPath = Join-Path $shellDir 'LayoutModification.xml'
+        $utf8 = New-Object System.Text.UTF8Encoding $false
+        [System.IO.File]::WriteAllText($layoutPath, $xml.Trim() + "`r`n", $utf8)
+
+        Remove-Item -LiteralPath (Join-Path $shellDir 'DefaultLayouts.xml') -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Taskband' -Recurse -Force -ErrorAction SilentlyContinue
+
+        Stop-Process -Name explorer -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+        if (-not (Get-Process -Name explorer -ErrorAction SilentlyContinue)) {
+            Start-Process explorer.exe
+        }
+
+        $detail = $names -join ', '
+        Write-Status "[+] [Taskbar] pinned $detail" 'Green'
+        Add-Result -Name 'Taskbar' -Status Installed -Detail $detail
+        return $true
+    } catch {
+        Write-Status "[!] [Taskbar] failed: $($_.Exception.Message)" 'Yellow'
+        Add-Result -Name 'Taskbar' -Status Skipped -Detail $_.Exception.Message
+        return $false
+    }
+}
+
 function Remove-LocalSupportUser {
     # Remove vuln-config support user; only needed between Stage 3 and 4.
     Write-Status "[-] [LocalSupport user] removing (created by vuln-config.ps1)" 'Cyan'

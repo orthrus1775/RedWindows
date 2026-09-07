@@ -24,6 +24,7 @@
     { "name": "autossh", "enabled": true },
     { "name": "sshpass", "enabled": true },
     { "name": "socat", "enabled": true },
+    { "name": "proxychains4", "enabled": true },
     { "name": "whois", "enabled": true },
     { "name": "net-tools", "enabled": true },
     { "name": "iputils-ping", "enabled": true },

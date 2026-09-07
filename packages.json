@@ -1436,6 +1436,19 @@
       ]
     },
     {
+      "name": "RemotePotato0",
+      "category": "potato",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "native",
+          "repo": "antonioCoco/RemotePotato0",
+          "slnPath": "RemotePotato0.sln",
+          "destRoot": "Potato"
+        }
+      ]
+    },
+    {
       "name": "SweetPotato",
       "category": "potato",
       "enabled": true,
@@ -2120,6 +2133,18 @@
           "type": "remoteFile",
           "url": "https://secure.eicar.org/eicar_com2.zip",
           "destination": "{ToolsRoot}\\eicar_com-2.zip"
+        }
+      ]
+    },
+    {
+      "name": "Proxifier",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "remoteFile",
+          "url": "https://www.proxifier.com/download/ProxifierSetup.exe",
+          "destination": "{ToolsRoot}\\ProxifierSetup.exe"
         }
       ]
     },
