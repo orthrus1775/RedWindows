@@ -636,3 +636,69 @@ offline = true
     Add-Result -Name 'FaceDancer offline' -Status Installed -Detail "vendor:$vendorDir"
     return $true
 }
+
+function Install-CrystalKit {
+    # Clone lives at C:\Tools\Crystal-Kit (packages.json). Crystal Palace + make
+    # are Linux (mingw/nasm); run them in WSL and symlink /opt/Crystal-Kit.
+    $kit = Join-Path $script:ToolsRoot 'Crystal-Kit'
+    $distro = Get-WslDistroName
+    if (-not $distro) {
+        Write-Status "[!] [Crystal-Kit] no WSL distro - Crystal Palace/make need Ubuntu" 'Yellow'
+        Add-Result -Name 'Crystal-Kit setup' -Status Failed -Detail 'no WSL distro'
+        return $false
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path $kit 'Makefile'))) {
+        Write-Status "[-] [Crystal-Kit] repo missing - cloning rasta-mouse/Crystal-Kit" 'Cyan'
+        if (-not (Install-GitCloneOnly -Name 'Crystal-Kit' -Repo 'rasta-mouse/Crystal-Kit' -DestRoot $script:ToolsRoot)) {
+            Add-Result -Name 'Crystal-Kit setup' -Status Failed -Detail 'git clone failed'
+            return $false
+        }
+    }
+
+    $tgz = Join-Path $kit 'cpdist-latest.tgz'
+    $url = 'https://tradecraftgarden.org/download/cpdist-latest.tgz'
+    $haveTgz = (Test-Path -LiteralPath $tgz) -and ((Get-Item -LiteralPath $tgz).Length -gt 1MB)
+    if (-not $haveTgz) {
+        Write-Status "[-] [Crystal Palace] downloading cpdist-latest.tgz" 'Cyan'
+        if (-not (Get-RemoteFile -Url $url -Destination $tgz)) {
+            Add-Result -Name 'Crystal Palace' -Status Failed -Detail 'download failed'
+            return $false
+        }
+    } else {
+        Write-Status "[+] [Crystal Palace] reusing $tgz" 'DarkGray'
+    }
+
+    $kitUnix = ConvertTo-WslPath $kit
+    $setup = @'
+set -e
+KIT='__KIT__'
+mkdir -p /opt
+rm -rf /opt/Crystal-Kit
+ln -sfn "$KIT" /opt/Crystal-Kit
+tar -xzf /opt/Crystal-Kit/cpdist-latest.tgz -C /opt/Crystal-Kit
+cd /opt/Crystal-Kit/crystalpalace
+chmod +x install
+./install
+cat > link << 'EOF'
+#!/usr/bin/env bash
+exec "$(dirname "$0")/cpl" link "$@"
+EOF
+chmod +x link
+cd /opt/Crystal-Kit
+make
+'@ -replace '__KIT__', $kitUnix
+
+    Write-Status "[-] [Crystal-Kit] Crystal Palace install + make (WSL $distro)" 'Cyan'
+    $exit = Invoke-WslRoot -Distro $distro -Bash $setup
+    if ($exit -ne 0) {
+        Write-Status "[!] [Crystal-Kit] setup failed (exit $exit)" 'Yellow'
+        Add-Result -Name 'Crystal-Kit setup' -Status Failed -Detail "wsl (exit $exit)"
+        return $false
+    }
+
+    Write-Status "[+] [Crystal-Kit] Crystal Palace + make ready ($kit)" 'Green'
+    Add-Result -Name 'Crystal Palace' -Status Installed -Detail 'cpdist-latest + link wrapper'
+    Add-Result -Name 'Crystal-Kit setup' -Status Installed -Detail 'make via WSL'
+    return $true
+}

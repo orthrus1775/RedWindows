@@ -195,6 +195,7 @@ function Invoke-Stage4 {
     Install-NimPackages
 
     Install-AllPackages
+    Install-CrystalKit
     Install-FaceDancerOffline
     Install-ConfuseEx
     Install-Client

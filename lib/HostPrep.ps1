@@ -537,6 +537,16 @@ function Get-WslExePath {
     return $null
 }
 
+function ConvertTo-WslPath {
+    param([Parameter(Mandatory)][string]$WindowsPath)
+    $full = [System.IO.Path]::GetFullPath($WindowsPath)
+    if ($full -match '^([A-Za-z]):\\(.*)$') {
+        $rest = ($Matches[2] -replace '\\', '/')
+        return "/mnt/$($Matches[1].ToLowerInvariant())/$rest"
+    }
+    return ($full -replace '\\', '/')
+}
+
 function Get-WslText {
     param($Value)
     return (($Value | Out-String) -replace "`0", '')
