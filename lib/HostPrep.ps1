@@ -63,12 +63,14 @@ function Enable-NumLock {
             Set-ItemProperty -Path $path -Name InitialKeyboardIndicators -Value '2' -Type String -Force
         }
 
-        Add-Type -Namespace RedWindows -Name Keyboard -MemberDefinition @'
+        if (-not ('RedWindows.Keyboard' -as [type])) {
+            Add-Type -Namespace RedWindows -Name Keyboard -MemberDefinition @'
 [DllImport("user32.dll", CharSet=CharSet.Auto, ExactSpelling=true)]
 public static extern short GetKeyState(int keyCode);
 [DllImport("user32.dll")]
 public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
-'@ -ErrorAction SilentlyContinue
+'@
+        }
 
         $VK_NUMLOCK = 0x90
         $KEYEVENTF_EXTENDEDKEY = 0x1
@@ -161,10 +163,12 @@ function Set-Background {
     }
 
     try {
-        Add-Type -Namespace RedWindows -Name Wallpaper -MemberDefinition @'
+        if (-not ('RedWindows.Wallpaper' -as [type])) {
+            Add-Type -Namespace RedWindows -Name Wallpaper -MemberDefinition @'
 [DllImport("user32.dll", CharSet = CharSet.Auto)]
 public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
-'@ -ErrorAction SilentlyContinue
+'@
+        }
 
         # WallpaperStyle 10 = Fill (avoids stretch/tile across resolutions).
         Set-ItemProperty -Path 'HKCU:\Control Panel\Desktop' -Name WallpaperStyle -Value '10'

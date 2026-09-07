@@ -680,7 +680,12 @@ KIT='__KIT__'
 export PATH="$HOME/.local/bin:$PATH"
 mkdir -p "$HOME/.local/bin"
 touch "$HOME/.bashrc"
-grep -qF '.local/bin' "$HOME/.bashrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+
+ensure_bashrc_line() {
+    line="$1"
+    grep -qF "$line" "$HOME/.bashrc" || printf '%s\n' "$line" >> "$HOME/.bashrc"
+}
+ensure_bashrc_line 'export PATH="$HOME/.local/bin:$PATH"'
 
 tar -xzf "$KIT/cpdist-latest.tgz" -C "$KIT"
 cd "$KIT/crystalpalace"
@@ -688,8 +693,9 @@ chmod +x install
 ./install
 
 if [ -f "$KIT/crystalpalace/cpl-completion.bash" ]; then
-    grep -qF 'cpl-completion.bash' "$HOME/.bashrc" || echo "source \"$KIT/crystalpalace/cpl-completion.bash\"" >> "$HOME/.bashrc"
+    ensure_bashrc_line "source \"$KIT/crystalpalace/cpl-completion.bash\""
 fi
+echo "[+] [Crystal Palace] ~/.bashrc PATH + cpl-completion"
 
 cat > link << 'EOF'
 #!/usr/bin/env bash
