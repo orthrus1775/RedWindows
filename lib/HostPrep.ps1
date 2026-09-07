@@ -831,7 +831,8 @@ function Invoke-WslRoot {
         [Parameter(Mandatory)]
         [string]$Distro,
         [Parameter(Mandatory)]
-        [string]$Bash
+        [string]$Bash,
+        [string]$User = 'root'
     )
     $env:WSL_UTF8 = '1'
     $wsl = Get-WslExePath
@@ -841,7 +842,7 @@ function Invoke-WslRoot {
     try {
         # Out-Host so apt/wsl stdout is not the function return value.
         # Callers used `$exit -ne 0` on that leak, which is true for any log line.
-        & $wsl -d $Distro -u root -- bash -lc $Bash 2>&1 | Out-Host
+        & $wsl -d $Distro -u $User -- bash -lc $Bash 2>&1 | Out-Host
         $code = $LASTEXITCODE
         if ($null -eq $code) { return 0 }
         return [int]$code

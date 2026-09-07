@@ -669,25 +669,41 @@ function Install-CrystalKit {
         Write-Status "[+] [Crystal Palace] reusing $tgz" 'DarkGray'
     }
 
+    $linuxUser = $script:AttackerUsername
+    if (-not $linuxUser) { $linuxUser = 'attacker' }
+
     $kitUnix = ConvertTo-WslPath $kit
     $setup = @'
 set -euo pipefail
 cd /
 KIT='__KIT__'
+export PATH="$HOME/.local/bin:$PATH"
+mkdir -p "$HOME/.local/bin"
+touch "$HOME/.bashrc"
+grep -qF '.local/bin' "$HOME/.bashrc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+
 tar -xzf "$KIT/cpdist-latest.tgz" -C "$KIT"
 cd "$KIT/crystalpalace"
 chmod +x install
 ./install
+
+if [ -f "$KIT/crystalpalace/cpl-completion.bash" ]; then
+    grep -qF 'cpl-completion.bash' "$HOME/.bashrc" || echo "source \"$KIT/crystalpalace/cpl-completion.bash\"" >> "$HOME/.bashrc"
+fi
+
 cat > link << 'EOF'
 #!/usr/bin/env bash
 exec "$(dirname "$0")/cpl" link "$@"
 EOF
 chmod +x link
+if [ ! -e "$KIT/crystalpalace/cpl" ] && [ -e "$HOME/.local/bin/cpl" ]; then
+    ln -sfn "$HOME/.local/bin/cpl" "$KIT/crystalpalace/cpl"
+fi
+
 cd "$KIT"
 make
-mkdir -p /opt
 if [ -L /opt/Crystal-Kit ] || [ ! -e /opt/Crystal-Kit ]; then
-    ln -sfn "$KIT" /opt/Crystal-Kit
+    sudo -n mkdir -p /opt && sudo -n ln -sfn "$KIT" /opt/Crystal-Kit || true
 fi
 '@ -replace '__KIT__', $kitUnix
 
@@ -696,8 +712,8 @@ fi
     [System.IO.File]::WriteAllText($setupWin, $setup.Replace("`r`n", "`n"), $utf8)
     $setupUnix = ConvertTo-WslPath $setupWin
 
-    Write-Status "[-] [Crystal-Kit] Crystal Palace install + make (WSL $distro)" 'Cyan'
-    $exit = Invoke-WslRoot -Distro $distro -Bash "bash '$setupUnix'"
+    Write-Status "[-] [Crystal-Kit] Crystal Palace install + make (WSL $distro as $linuxUser)" 'Cyan'
+    $exit = Invoke-WslRoot -Distro $distro -User $linuxUser -Bash "bash '$setupUnix'"
     if ($exit -ne 0) {
         Write-Status "[!] [Crystal-Kit] setup failed (exit $exit)" 'Yellow'
         Add-Result -Name 'Crystal-Kit setup' -Status Failed -Detail "wsl (exit $exit)"
