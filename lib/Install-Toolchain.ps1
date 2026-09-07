@@ -671,13 +671,11 @@ function Install-CrystalKit {
 
     $kitUnix = ConvertTo-WslPath $kit
     $setup = @'
-set -e
+set -euo pipefail
+cd /
 KIT='__KIT__'
-mkdir -p /opt
-rm -rf /opt/Crystal-Kit
-ln -sfn "$KIT" /opt/Crystal-Kit
-tar -xzf /opt/Crystal-Kit/cpdist-latest.tgz -C /opt/Crystal-Kit
-cd /opt/Crystal-Kit/crystalpalace
+tar -xzf "$KIT/cpdist-latest.tgz" -C "$KIT"
+cd "$KIT/crystalpalace"
 chmod +x install
 ./install
 cat > link << 'EOF'
@@ -685,12 +683,21 @@ cat > link << 'EOF'
 exec "$(dirname "$0")/cpl" link "$@"
 EOF
 chmod +x link
-cd /opt/Crystal-Kit
+cd "$KIT"
 make
+mkdir -p /opt
+if [ -L /opt/Crystal-Kit ] || [ ! -e /opt/Crystal-Kit ]; then
+    ln -sfn "$KIT" /opt/Crystal-Kit
+fi
 '@ -replace '__KIT__', $kitUnix
 
+    $setupWin = Join-Path $kit 'redwindows-crystal-setup.sh'
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($setupWin, $setup.Replace("`r`n", "`n"), $utf8)
+    $setupUnix = ConvertTo-WslPath $setupWin
+
     Write-Status "[-] [Crystal-Kit] Crystal Palace install + make (WSL $distro)" 'Cyan'
-    $exit = Invoke-WslRoot -Distro $distro -Bash $setup
+    $exit = Invoke-WslRoot -Distro $distro -Bash "bash '$setupUnix'"
     if ($exit -ne 0) {
         Write-Status "[!] [Crystal-Kit] setup failed (exit $exit)" 'Yellow'
         Add-Result -Name 'Crystal-Kit setup' -Status Failed -Detail "wsl (exit $exit)"
