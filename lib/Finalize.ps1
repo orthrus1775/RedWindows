@@ -842,6 +842,89 @@ function Optimize-VmDisk {
     }
 }
 
+function Get-WindowsTerminalV5Guid {
+    param(
+        [Parameter(Mandatory)]
+        [string]$Name,
+        [guid]$Namespace = '2bde4a90-d05f-401c-9492-e40884ead1d8'
+    )
+    $nsBytes = $Namespace.ToByteArray()
+    [Array]::Reverse($nsBytes, 0, 4)
+    [Array]::Reverse($nsBytes, 4, 2)
+    [Array]::Reverse($nsBytes, 6, 2)
+    $sha1 = [System.Security.Cryptography.SHA1]::Create()
+    try {
+        $hash = $sha1.ComputeHash($nsBytes + [System.Text.Encoding]::Unicode.GetBytes($Name))
+    } finally {
+        $sha1.Dispose()
+    }
+    $hash[6] = [byte](($hash[6] -band 0x0F) -bor 0x50)
+    $hash[8] = [byte](($hash[8] -band 0x3F) -bor 0x80)
+    $guidBytes = $hash[0..15]
+    [Array]::Reverse($guidBytes, 0, 4)
+    [Array]::Reverse($guidBytes, 4, 2)
+    [Array]::Reverse($guidBytes, 6, 2)
+    return [guid]$guidBytes
+}
+
+function Get-WindowsTerminalWslProfileJson {
+    $blocks = [System.Collections.Generic.List[string]]::new()
+
+    $ubuntuPkg = Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like 'CanonicalGroupLimited.Ubuntu*' } |
+        Select-Object -First 1
+    if ($ubuntuPkg) {
+        $pfn = $ubuntuPkg.PackageFamilyName
+        $display = $ubuntuPkg.DisplayName
+        if (-not $display) { $display = 'Ubuntu' }
+        $appxGuid = if ($pfn -eq 'CanonicalGroupLimited.Ubuntu22.04LTS_79rhkp1fndgsc') {
+            [guid]'4ff56d04-d9cf-57ea-bae2-ad396374e7e3'
+        } else {
+            Get-WindowsTerminalV5Guid -Name $pfn
+        }
+        [void]$blocks.Add(@"
+            {
+                "guid": "{$appxGuid}",
+                "hidden": false,
+                "icon": "__PICTURES__\\ubuntu.png",
+                "name": "$display",
+                "source": "$pfn"
+            }
+"@)
+    }
+
+    $distro = $null
+    if (Get-Command Get-WslDistroName -ErrorAction SilentlyContinue) {
+        $distro = Get-WslDistroName
+    }
+    if ($distro) {
+        $wslGuid = Get-WindowsTerminalV5Guid -Name $distro
+        if (-not $ubuntuPkg) {
+            [void]$blocks.Add(@"
+            {
+                "commandline": "wsl.exe -d $distro",
+                "guid": "{58ad8b0c-3ef8-5f4d-87d3-6bf403d3a4f8}",
+                "hidden": false,
+                "icon": "__PICTURES__\\ubuntu.png",
+                "name": "$distro",
+                "startingDirectory": "~"
+            }
+"@)
+        }
+        [void]$blocks.Add(@"
+            {
+                "guid": "{$wslGuid}",
+                "hidden": true,
+                "name": "$distro",
+                "source": "Windows.Terminal.Wsl"
+            }
+"@)
+    }
+
+    if ($blocks.Count -eq 0) { return '' }
+    return ",`r`n" + ($blocks -join ",`r`n")
+}
+
 function Set-WindowsTerminalConfig {
     Write-Status "[-] [Windows Terminal] copying icons and writing settings.json" 'Cyan'
     try {
@@ -894,6 +977,7 @@ function Set-WindowsTerminalConfig {
         $sshKeyJson   = $sshKeyPath.Replace('\', '\\')
         $picturesJson = $picturesDir.Replace('\', '\\')
         $json = Get-Content -LiteralPath $templatePath -Raw -Encoding UTF8
+        $json = $json.Replace('__WSL_PROFILES__', (Get-WindowsTerminalWslProfileJson))
         $json = $json.Replace('__SSH_KEY__', $sshKeyJson).Replace('__PICTURES__', $picturesJson)
 
         $settingsPath = Join-Path $localState 'settings.json'
@@ -956,13 +1040,10 @@ function Set-TaskbarPins {
             if ($wtFound) { $wtExe = $wtFound.FullName }
         }
 
-        $wtLnkExisting = @(
-            (Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\Windows Terminal.lnk'),
-            (Join-Path $roaming 'Microsoft\Windows\Start Menu\Programs\Windows Terminal.lnk')
-        ) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+        $wtLaunch = Join-Path $local 'Microsoft\WindowsApps\wt.exe'
+        $wtAumid = if ($wtPkg) { "$($wtPkg.PackageFamilyName)!App" } else { 'Microsoft.WindowsTerminal_8wekyb3d8bbwe!App' }
 
         $desktopTargets = [ordered]@{
-            'Windows Terminal'   = @($wtExe)
             'Visual Studio Code' = @(
                 (Join-Path $local 'Programs\Microsoft VS Code\Code.exe'),
                 'C:\Program Files\Microsoft VS Code\Code.exe',
@@ -976,27 +1057,40 @@ function Set-TaskbarPins {
         $pinXmlLines = [System.Collections.Generic.List[string]]::new()
         $names = [System.Collections.Generic.List[string]]::new()
         $wshell = New-Object -ComObject WScript.Shell
+        if (-not (Test-Path -LiteralPath $pinDir)) {
+            New-Item -ItemType Directory -Path $pinDir -Force | Out-Null
+        }
+
+        $wtLnkPath = Join-Path $pinDir 'Windows Terminal.lnk'
+        if ((Test-Path -LiteralPath $wtLaunch) -or $wtPkg) {
+            $wtLnk = $wshell.CreateShortcut($wtLnkPath)
+            if (Test-Path -LiteralPath $wtLaunch) {
+                $wtLnk.TargetPath = $wtLaunch
+            } else {
+                $wtLnk.TargetPath = Join-Path $env:WINDIR 'explorer.exe'
+                $wtLnk.Arguments = "shell:AppsFolder\$wtAumid"
+            }
+            if ($wtExe) { $wtLnk.IconLocation = "$wtExe,0" }
+            $wtLnk.Save()
+            [void]$pinXmlLines.Add("        <taskbar:DesktopApp DesktopApplicationLinkPath=`"$wtLnkPath`"/>")
+            [void]$names.Add('Windows Terminal')
+        } else {
+            Write-Status "[!] [Taskbar] Windows Terminal not found - skip" 'Yellow'
+        }
+
         foreach ($name in $desktopTargets.Keys) {
-            if (-not (Test-Path -LiteralPath $pinDir)) {
-                New-Item -ItemType Directory -Path $pinDir -Force | Out-Null
+            $exe = $desktopTargets[$name] | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+            if (-not $exe) {
+                Write-Status "[!] [Taskbar] $name not found - skip" 'Yellow'
+                continue
             }
             $lnkPath = Join-Path $pinDir "$name.lnk"
-
-            if ($name -eq 'Windows Terminal' -and $wtLnkExisting) {
-                Copy-Item -LiteralPath $wtLnkExisting -Destination $lnkPath -Force
-            } else {
-                $exe = $desktopTargets[$name] | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
-                if (-not $exe) {
-                    Write-Status "[!] [Taskbar] $name not found - skip" 'Yellow'
-                    continue
-                }
-                $lnk = $wshell.CreateShortcut($lnkPath)
-                $lnk.TargetPath = $exe
-                $lnk.IconLocation = "$exe,0"
-                $parent = Split-Path -Parent $exe
-                if ($parent) { $lnk.WorkingDirectory = $parent }
-                $lnk.Save()
-            }
+            $lnk = $wshell.CreateShortcut($lnkPath)
+            $lnk.TargetPath = $exe
+            $lnk.IconLocation = "$exe,0"
+            $parent = Split-Path -Parent $exe
+            if ($parent) { $lnk.WorkingDirectory = $parent }
+            $lnk.Save()
             [void]$pinXmlLines.Add("        <taskbar:DesktopApp DesktopApplicationLinkPath=`"$lnkPath`"/>")
             [void]$names.Add($name)
         }

@@ -245,7 +245,7 @@
                 "hidden": false,
                 "name": "Git Bash",
                 "source": "Git"
-            }
+            }__WSL_PROFILES__
         ]
     },
     "schemes": [],

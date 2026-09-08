@@ -1940,6 +1940,18 @@
       ]
     },
     {
+      "name": "PackMyPayload",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "mgeeky/PackMyPayload",
+          "pipRequirements": true
+        }
+      ]
+    },
+    {
       "name": "SuperMega",
       "category": "misc",
       "enabled": true,
