@@ -63,12 +63,11 @@ source "vmware-iso" "windows10" {
   vm_name       = var.vm_name
   guest_os_type = "windows9-64" # VMware's internal identifier for Windows 10/11 64-bit
 
-  # Pin an older VMX hardware version and force legacy BIOS. Left unset, current
-  # VMware Workstation defaults new VMs to a version high enough to come up as
-  # UEFI, which has no floppy controller and makes Setup's answer-file
-  # auto-detection unreliable - the exact "stuck on the manual Language to
-  # install screen" symptom this whole file exists to avoid.
-  version          = "14"
+  # Hardware 20 = Workstation 17.x. Firmware must stay BIOS so the floppy
+  # exists and Setup still picks up autounattend.xml. Unset firmware on a
+  # current Workstation host defaults to UEFI (no floppy) and stalls on the
+  # Language screen.
+  version           = "20"
   disk_adapter_type = "lsisas1068"
 
   iso_url      = var.iso_url
