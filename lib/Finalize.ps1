@@ -1009,7 +1009,7 @@ function Set-WindowsTerminalConfig {
 
 function Set-TaskbarPins {
     # Win10: pin list is a layout XML. Explorer's pintotaskbar verb is gone.
-    Write-Status "[-] [Taskbar] pinning Windows Terminal, VS Code, File Explorer" 'Cyan'
+    Write-Status "[-] [Taskbar] pinning VS Code, File Explorer" 'Cyan'
     try {
         $user = $script:AttackerUsername
         if (-not $user) { $user = 'attacker' }
@@ -1027,22 +1027,6 @@ function Set-TaskbarPins {
             }
         }
 
-        $wtExe = $null
-        $wtPkg = Get-AppxPackage -AllUsers -Name Microsoft.WindowsTerminal -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-        if ($wtPkg -and $wtPkg.InstallLocation) {
-            $wtCandidate = Join-Path $wtPkg.InstallLocation 'WindowsTerminal.exe'
-            if (Test-Path -LiteralPath $wtCandidate) { $wtExe = $wtCandidate }
-        }
-        if (-not $wtExe) {
-            $wtFound = Get-ChildItem -Path "$env:ProgramFiles\WindowsApps" -Filter 'WindowsTerminal.exe' -Recurse -ErrorAction SilentlyContinue |
-                Select-Object -First 1
-            if ($wtFound) { $wtExe = $wtFound.FullName }
-        }
-
-        $wtLaunch = Join-Path $local 'Microsoft\WindowsApps\wt.exe'
-        $wtAumid = if ($wtPkg) { "$($wtPkg.PackageFamilyName)!App" } else { 'Microsoft.WindowsTerminal_8wekyb3d8bbwe!App' }
-
         $desktopTargets = [ordered]@{
             'Visual Studio Code' = @(
                 (Join-Path $local 'Programs\Microsoft VS Code\Code.exe'),
@@ -1054,28 +1038,15 @@ function Set-TaskbarPins {
             )
         }
 
+        Remove-Item -LiteralPath (Join-Path $pinDir 'Windows Terminal.lnk') -Force -ErrorAction SilentlyContinue
+        $pinnedWt = Join-Path $roaming 'Microsoft\Internet Explorer\Quick Launch\User Pinned\TaskBar\Windows Terminal.lnk'
+        Remove-Item -LiteralPath $pinnedWt -Force -ErrorAction SilentlyContinue
+
         $pinXmlLines = [System.Collections.Generic.List[string]]::new()
         $names = [System.Collections.Generic.List[string]]::new()
         $wshell = New-Object -ComObject WScript.Shell
         if (-not (Test-Path -LiteralPath $pinDir)) {
             New-Item -ItemType Directory -Path $pinDir -Force | Out-Null
-        }
-
-        $wtLnkPath = Join-Path $pinDir 'Windows Terminal.lnk'
-        if ((Test-Path -LiteralPath $wtLaunch) -or $wtPkg) {
-            $wtLnk = $wshell.CreateShortcut($wtLnkPath)
-            if (Test-Path -LiteralPath $wtLaunch) {
-                $wtLnk.TargetPath = $wtLaunch
-            } else {
-                $wtLnk.TargetPath = Join-Path $env:WINDIR 'explorer.exe'
-                $wtLnk.Arguments = "shell:AppsFolder\$wtAumid"
-            }
-            if ($wtExe) { $wtLnk.IconLocation = "$wtExe,0" }
-            $wtLnk.Save()
-            [void]$pinXmlLines.Add("        <taskbar:DesktopApp DesktopApplicationLinkPath=`"$wtLnkPath`"/>")
-            [void]$names.Add('Windows Terminal')
-        } else {
-            Write-Status "[!] [Taskbar] Windows Terminal not found - skip" 'Yellow'
         }
 
         foreach ($name in $desktopTargets.Keys) {
