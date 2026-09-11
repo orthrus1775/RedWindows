@@ -40,6 +40,7 @@
     { "name": "make", "enabled": true },
     { "name": "cmake", "enabled": true },
     { "name": "nasm", "enabled": true },
+    { "name": "xxd", "enabled": true },
     { "name": "clang", "enabled": true },
     { "name": "lld", "enabled": true },
     { "name": "llvm", "enabled": true },

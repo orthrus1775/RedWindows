@@ -731,3 +731,103 @@ fi
     Add-Result -Name 'Crystal-Kit setup' -Status Installed -Detail 'make via WSL'
     return $true
 }
+
+function Install-Reflectra {
+    # Clone lives at C:\Tools\reflectra (packages.json). install.sh is Linux
+    # (curl/tar/make + Crystal Palace). Leave upstream build.sh as
+    # LINKER=./dist/link and drop a cpl wrapper there (no script edits).
+    $kit = Join-Path $script:ToolsRoot 'reflectra'
+    $distro = Get-WslDistroName
+    if (-not $distro) {
+        Write-Status "[!] [reflectra] no WSL distro - install.sh needs Ubuntu" 'Yellow'
+        Add-Result -Name 'reflectra setup' -Status Failed -Detail 'no WSL distro'
+        return $false
+    }
+
+    if (-not (Test-Path -LiteralPath (Join-Path $kit 'install.sh'))) {
+        Write-Status "[-] [reflectra] repo missing - cloning k1ng0fn0th1ng/reflectra" 'Cyan'
+        if (-not (Install-GitCloneOnly -Name 'reflectra' -Repo 'k1ng0fn0th1ng/reflectra' -DestRoot $script:ToolsRoot)) {
+            Add-Result -Name 'reflectra setup' -Status Failed -Detail 'git clone failed'
+            return $false
+        }
+    }
+
+    $linuxUser = $script:AttackerUsername
+    if (-not $linuxUser) { $linuxUser = 'attacker' }
+
+    $kitUnix = ConvertTo-WslPath $kit
+    $setup = @'
+set -euo pipefail
+KIT='__KIT__'
+cd "$KIT"
+chmod +x install.sh build.sh
+./install.sh
+
+# build.sh calls ./dist/link. cpl lives in crystalpalace/, not dist/.
+mkdir -p "$KIT/dist" "$KIT/crystalpalace"
+cat > "$KIT/crystalpalace/link" << 'EOF'
+#!/usr/bin/env bash
+exec "$(dirname "$0")/cpl" link "$@"
+EOF
+chmod +x "$KIT/crystalpalace/link"
+cat > "$KIT/dist/link" << 'EOF'
+#!/usr/bin/env bash
+exec "$(dirname "$0")/../crystalpalace/cpl" link "$@"
+EOF
+chmod +x "$KIT/dist/link"
+
+if [ ! -e "$KIT/crystalpalace/cpl" ] && [ -e "$HOME/.local/bin/cpl" ]; then
+    ln -sfn "$HOME/.local/bin/cpl" "$KIT/crystalpalace/cpl"
+fi
+
+# Ubuntu 22.04 xxd (2021-10-22) has no -n. build.sh uses: xxd -i -n crystal_loader <bin>
+mkdir -p "$HOME/.local/bin"
+cat > "$HOME/.local/bin/xxd" << 'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+real=/usr/bin/xxd
+name=""
+args=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -n)
+            if [[ $# -lt 2 ]]; then
+                echo "xxd: -n requires a name" >&2
+                exit 1
+            fi
+            name="$2"
+            shift 2
+            ;;
+        *)
+            args+=("$1")
+            shift
+            ;;
+    esac
+done
+if [[ -z "$name" ]]; then
+    exec "$real" "${args[@]}"
+fi
+"$real" "${args[@]}" | sed -e "s/unsigned char [^[]*/unsigned char ${name}/" -e "s/unsigned int [^[:space:]]*_len/unsigned int ${name}_len/"
+EOF
+chmod +x "$HOME/.local/bin/xxd"
+grep -qF 'export PATH="$HOME/.local/bin:$PATH"' "$HOME/.bashrc" 2>/dev/null \
+    || printf '%s\n' 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+'@ -replace '__KIT__', $kitUnix
+
+    $setupWin = Join-Path $kit 'redwindows-reflectra-setup.sh'
+    $utf8 = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::WriteAllText($setupWin, $setup.Replace("`r`n", "`n"), $utf8)
+    $setupUnix = ConvertTo-WslPath $setupWin
+
+    Write-Status "[-] [reflectra] ./install.sh + dist/link wrapper (WSL $distro as $linuxUser)" 'Cyan'
+    $exit = Invoke-WslRoot -Distro $distro -User $linuxUser -Bash "bash '$setupUnix'"
+    if ($exit -ne 0) {
+        Write-Status "[!] [reflectra] setup failed (exit $exit)" 'Yellow'
+        Add-Result -Name 'reflectra setup' -Status Failed -Detail "wsl (exit $exit)"
+        return $false
+    }
+
+    Write-Status "[+] [reflectra] install.sh completed ($kit)" 'Green'
+    Add-Result -Name 'reflectra setup' -Status Installed -Detail 'install.sh + dist/link wrapper via WSL'
+    return $true
+}

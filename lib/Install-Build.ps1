@@ -534,6 +534,8 @@ function Install-FromSourceGo {
         [string]$Name,
         [string]$Repo,
         [string]$DestRoot = $script:ToolsRoot,
+        # Optional single file, e.g. YoinkLighter.go -> `go build YoinkLighter.go`.
+        [string]$Source,
         # Build-time env vars for cross-compile (e.g. CGO_ENABLED/GOARCH/GOOS).
         [hashtable]$Env,
         [switch]$SubModule
@@ -555,17 +557,27 @@ function Install-FromSourceGo {
     }
 
     $outExe = Join-Path $cloneDir "$Name.exe"
-    Write-Status "[-] [$Name] go build" 'Cyan'
+    if ($Source) {
+        Write-Status "[-] [$Name] go build $Source" 'Cyan'
+    } else {
+        Write-Status "[-] [$Name] go build" 'Cyan'
+    }
     Push-Location $cloneDir
     $savedEnv = @{}
     try {
-        foreach ($key in $Env.Keys) {
-            $savedEnv[$key] = [Environment]::GetEnvironmentVariable($key)
-            Set-Item -Path "Env:$key" -Value $Env[$key]
+        if ($Env) {
+            foreach ($key in $Env.Keys) {
+                $savedEnv[$key] = [Environment]::GetEnvironmentVariable($key)
+                Set-Item -Path "Env:$key" -Value $Env[$key]
+            }
         }
 
         # go build stderr is chatty; Invoke-NativeQuiet avoids EAP Stop aborts.
-        Invoke-NativeQuiet { go build -o $outExe . *>$null }
+        if ($Source) {
+            Invoke-NativeQuiet { go build $Source *>$null }
+        } else {
+            Invoke-NativeQuiet { go build -o $outExe . *>$null }
+        }
         if ($LASTEXITCODE -ne 0) {
             Write-Status "[!] [$Name] go build failed (exit $LASTEXITCODE)" 'Yellow'
             return $false

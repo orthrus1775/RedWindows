@@ -124,6 +124,7 @@ function ConvertTo-PackageTier {
         'go' {
             $repo = [string]$TierSpec.repo
             $destRoot = Resolve-PackageDestRoot $TierSpec.destRoot
+            $source = [string]$TierSpec.source
             $envMap = $null
             if ($TierSpec.env) {
                 $envMap = @{}
@@ -134,6 +135,7 @@ function ConvertTo-PackageTier {
             return {
                 $params = @{ Name = $PackageName; Repo = $repo; DestRoot = $destRoot }
                 if ($envMap) { $params.Env = $envMap }
+                if ($source) { $params.Source = $source }
                 Install-FromSourceGo @params
             }.GetNewClosure()
         }

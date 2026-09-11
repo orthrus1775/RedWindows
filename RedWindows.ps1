@@ -196,6 +196,7 @@ function Invoke-Stage4 {
 
     Install-AllPackages
     Install-CrystalKit
+    Install-Reflectra
     Install-FaceDancerOffline
     Install-ConfuseEx
     Install-Client

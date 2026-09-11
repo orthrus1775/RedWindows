@@ -347,6 +347,28 @@
         }
       ]
     },
+        {
+      "name": "Lucky-Spark",
+      "category": "clone",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "Schich/Lucky-Spark"
+        }
+      ]
+    },
+    {
+      "name": "reflectra",
+      "category": "clone",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "k1ng0fn0th1ng/reflectra"
+        }
+      ]
+    },
     {
       "name": "DNSCAT",
       "category": "clone",
@@ -1771,6 +1793,18 @@
       ]
     },
     {
+      "name": "YoinkLighter",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "go",
+          "repo": "orthrus1775/YoinkLighter",
+          "source": "YoinkLighter.go"
+        }
+      ]
+    },
+    {
       "name": "GoBuster",
       "category": "misc",
       "enabled": true,
@@ -1990,6 +2024,18 @@
       ]
     },
     {
+      "name": "ShieldCrash",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "https://github.com/MSNightmare/ShieldCrash.git",
+          "destRoot": "NightmareEclipse"
+        }
+      ]
+    },
+    {
       "name": "GreatXML",
       "category": "misc",
       "enabled": true,
@@ -2087,6 +2133,19 @@
       ]
     },
     {
+      "name": "DumpGuard",
+      "category": "sharp",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "native",
+          "repo": "bytewreck/DumpGuard",
+          "slnPath": "DumpGuard.sln",
+          "destRoot": "SharpTools"
+        }
+      ]
+    },
+    {
       "name": "RegPwnBOF",
       "category": "bof",
       "enabled": true,
@@ -2109,6 +2168,29 @@
           "destination": "{DlRoot}\\resource_hacker.zip",
           "extractZip": true,
           "extractTo": "{ToolsRoot}"
+        }
+      ]
+    },
+    {
+      "name": "Ghidra",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "multi",
+          "steps": [
+            {
+              "type": "winget",
+              "id": "EclipseAdoptium.Temurin.21.JDK"
+            },
+            {
+              "type": "remoteFile",
+              "url": "https://github.com/NationalSecurityAgency/ghidra/releases/download/Ghidra_12.1.3_build/ghidra_12.1.3_PUBLIC_20260817.zip",
+              "destination": "{DlRoot}\\ghidra_12.1.3_PUBLIC_20260817.zip",
+              "extractZip": true,
+              "extractTo": "{ToolsRoot}\\Ghidra"
+            }
+          ]
         }
       ]
     },

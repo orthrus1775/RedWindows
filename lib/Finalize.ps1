@@ -860,38 +860,113 @@ function Get-WindowsTerminalV5Guid {
     }
     $hash[6] = [byte](($hash[6] -band 0x0F) -bor 0x50)
     $hash[8] = [byte](($hash[8] -band 0x3F) -bor 0x80)
-    $guidBytes = $hash[0..15]
+    # Slice yields Object[] in Windows PowerShell; [guid] needs a byte[].
+    $guidBytes = [byte[]]$hash[0..15]
     [Array]::Reverse($guidBytes, 0, 4)
     [Array]::Reverse($guidBytes, 4, 2)
     [Array]::Reverse($guidBytes, 6, 2)
     return [guid]$guidBytes
 }
 
+function Get-WindowsTerminalOwnedProfileNames {
+    @(
+        'Team Server'
+        'RD1'
+        'RD2'
+        'RD3'
+        'Payload'
+        'File Server'
+        'Exfil Server'
+        'Command Prompt Admin'
+    )
+}
+
+function Test-WindowsTerminalPlaceholderCommandLine {
+    param([string]$CommandLine)
+    if ([string]::IsNullOrWhiteSpace($CommandLine)) { return $true }
+    return $CommandLine -match '<(TeamServer|RD[123]|Payload)IP>' -or
+        $CommandLine -match 'domain_of_file_(exfil_)?server\.com'
+}
+
+function ConvertTo-WindowsTerminalJson {
+    param($Settings)
+    $jsonOut = $Settings | ConvertTo-Json -Depth 100
+    return ($jsonOut -replace '\\/', '/')
+}
+
+function Update-WindowsTerminalUbuntuProfiles {
+    param(
+        [Parameter(Mandatory)]
+        [object[]]$List,
+        [string]$PicturesDir
+    )
+    $icon = Join-Path $PicturesDir 'ubuntu.png'
+    foreach ($p in $List) {
+        $source = [string]$p.source
+        $name = [string]$p.name
+        if ($source -eq 'Windows.Terminal.Wsl' -and $name -match 'Ubuntu') {
+            $p.hidden = $true
+        }
+        if ($source -like 'CanonicalGroupLimited.Ubuntu*') {
+            $p.hidden = $false
+            if ($p.PSObject.Properties['icon']) {
+                $p.icon = $icon
+            } else {
+                $p | Add-Member -NotePropertyName icon -NotePropertyValue $icon
+            }
+        }
+    }
+}
+
+function Merge-WindowsTerminalOwnedProfiles {
+    param(
+        $ExistingSettings,
+        $TemplateSettings,
+        [string]$PicturesDir
+    )
+    $existingList = [System.Collections.Generic.List[object]]::new()
+    foreach ($p in @($ExistingSettings.profiles.list)) {
+        [void]$existingList.Add($p)
+    }
+    $templateList = @($TemplateSettings.profiles.list)
+
+    foreach ($name in (Get-WindowsTerminalOwnedProfileNames)) {
+        $fromTemplate = $templateList | Where-Object { $_.name -eq $name } | Select-Object -First 1
+        if (-not $fromTemplate) { continue }
+        $clone = $fromTemplate | ConvertTo-Json -Depth 20 | ConvertFrom-Json
+        $existing = $existingList | Where-Object { $_.name -eq $name } | Select-Object -First 1
+        if ($existing) {
+            if ($clone.icon) {
+                if ($existing.PSObject.Properties['icon']) {
+                    $existing.icon = $clone.icon
+                } else {
+                    $existing | Add-Member -NotePropertyName icon -NotePropertyValue $clone.icon
+                }
+            }
+            if (Test-WindowsTerminalPlaceholderCommandLine ([string]$existing.commandline)) {
+                $existing.commandline = $clone.commandline
+            }
+        } else {
+            [void]$existingList.Add($clone)
+        }
+    }
+
+    $merged = $existingList.ToArray()
+    Update-WindowsTerminalUbuntuProfiles -List $merged -PicturesDir $PicturesDir
+    $ExistingSettings.profiles.list = $merged
+    return $ExistingSettings
+}
+
 function Get-WindowsTerminalWslProfileJson {
+    # Seed only the auto WSL fragment as hidden. Do not invent Canonical AppX
+    # GUIDs — Terminal assigns those on first launch, and they are not UUID v5
+    # of the package family name (this image uses CanonicalGroupLimited.Ubuntu_*
+    # with guid {51855cb2-8cce-5362-8f54-464b92b32386}, not Ubuntu22.04LTS).
     $blocks = [System.Collections.Generic.List[string]]::new()
 
     $ubuntuPkg = Get-AppxPackage -AllUsers -ErrorAction SilentlyContinue |
         Where-Object { $_.Name -like 'CanonicalGroupLimited.Ubuntu*' } |
         Select-Object -First 1
-    if ($ubuntuPkg) {
-        $pfn = $ubuntuPkg.PackageFamilyName
-        $display = $ubuntuPkg.DisplayName
-        if (-not $display) { $display = 'Ubuntu' }
-        $appxGuid = if ($pfn -eq 'CanonicalGroupLimited.Ubuntu22.04LTS_79rhkp1fndgsc') {
-            [guid]'4ff56d04-d9cf-57ea-bae2-ad396374e7e3'
-        } else {
-            Get-WindowsTerminalV5Guid -Name $pfn
-        }
-        [void]$blocks.Add(@"
-            {
-                "guid": "{$appxGuid}",
-                "hidden": false,
-                "icon": "__PICTURES__\\ubuntu.png",
-                "name": "$display",
-                "source": "$pfn"
-            }
-"@)
-    }
 
     $distro = $null
     if (Get-Command Get-WslDistroName -ErrorAction SilentlyContinue) {
@@ -976,11 +1051,31 @@ function Set-WindowsTerminalConfig {
         # JSON needs escaped backslashes in string values.
         $sshKeyJson   = $sshKeyPath.Replace('\', '\\')
         $picturesJson = $picturesDir.Replace('\', '\\')
-        $json = Get-Content -LiteralPath $templatePath -Raw -Encoding UTF8
-        $json = $json.Replace('__WSL_PROFILES__', (Get-WindowsTerminalWslProfileJson))
-        $json = $json.Replace('__SSH_KEY__', $sshKeyJson).Replace('__PICTURES__', $picturesJson)
+        $templateJson = Get-Content -LiteralPath $templatePath -Raw -Encoding UTF8
+        $templateJson = $templateJson.Replace('__SSH_KEY__', $sshKeyJson).Replace('__PICTURES__', $picturesJson)
 
         $settingsPath = Join-Path $localState 'settings.json'
+        $existing = $null
+        if (Test-Path -LiteralPath $settingsPath) {
+            try {
+                $existing = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            } catch {
+                Write-Status "[!] [Windows Terminal] existing settings.json not parseable - replacing" 'Yellow'
+            }
+        }
+
+        if ($existing) {
+            $parseJson = $templateJson.Replace('__WSL_PROFILES__', '')
+            $template = $parseJson | ConvertFrom-Json
+            $merged = Merge-WindowsTerminalOwnedProfiles -ExistingSettings $existing -TemplateSettings $template -PicturesDir $picturesDir
+            $json = ConvertTo-WindowsTerminalJson -Settings $merged
+            $backup = "$settingsPath.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+            Copy-Item -LiteralPath $settingsPath -Destination $backup -Force
+            Write-Status "[+] [Windows Terminal] merged SSH profiles into existing settings (backup $backup)" 'Green'
+        } else {
+            $json = $templateJson.Replace('__WSL_PROFILES__', (Get-WindowsTerminalWslProfileJson))
+        }
+
         Set-Content -LiteralPath $settingsPath -Value $json -Encoding UTF8 -Force
         Write-Status "[+] [Windows Terminal] wrote $settingsPath" 'Green'
 
