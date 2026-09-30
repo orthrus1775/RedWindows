@@ -5,7 +5,7 @@
 
 .DESCRIPTION
   Modifies the current user's settings.json. Built-in profiles (Team Server,
-  RD1-RD3, Payload, File Server, Exfil Server) already have guid, icon,
+  RD1-RD3, Payload, Kali, File Server, Exfil Server) already have guid, icon,
   commandline, and tab title defaults. Pass only the IP or hostname to use
   those defaults. Any extra flag overrides that default for this run:
 
@@ -27,6 +27,8 @@
 .EXAMPLE
   Set-TerminalHosts -TeamServer 192.168.10.25 -RD1 10.0.0.11 -FileServer files.lab.local
 .EXAMPLE
+  Set-TerminalHosts -Kali 172.16.1.177
+.EXAMPLE
   Set-TerminalHosts -Name RD1 10.0.0.11
 .EXAMPLE
   Set-TerminalHosts -Name RD4 10.0.0.14 -CommandLine 'ssh -i C:\Users\attacker\.ssh\id_ed25519 attacker@10.0.0.14' -Icon bug.png
@@ -40,6 +42,7 @@ param(
     [string]$RD2,
     [string]$RD3,
     [string]$Payload,
+    [string]$Kali,
     [string]$FileServer,
     [string]$ExfilServer,
 
@@ -74,6 +77,7 @@ $script:BuiltInNames = @(
     'RD2'
     'RD3'
     'Payload'
+    'Kali'
     'File Server'
     'Exfil Server'
     'Command Prompt Admin'
@@ -85,6 +89,7 @@ $script:HostTargets = @(
     [pscustomobject]@{ Name = 'RD2';           Kind = 'ssh';   Param = 'RD2' }
     [pscustomobject]@{ Name = 'RD3';           Kind = 'ssh';   Param = 'RD3' }
     [pscustomobject]@{ Name = 'Payload';       Kind = 'ssh';   Param = 'Payload' }
+    [pscustomobject]@{ Name = 'Kali';          Kind = 'ssh';   Param = 'Kali' }
     [pscustomobject]@{ Name = 'File Server';   Kind = 'https'; Param = 'FileServer' }
     [pscustomobject]@{ Name = 'Exfil Server';  Kind = 'https'; Param = 'ExfilServer' }
 )
@@ -144,6 +149,7 @@ function Resolve-BuiltInName {
         'RD2'                  = 'RD2'
         'RD3'                  = 'RD3'
         'Payload'              = 'Payload'
+        'Kali'                 = 'Kali'
         'FileServer'           = 'File Server'
         'File Server'          = 'File Server'
         'ExfilServer'          = 'Exfil Server'
@@ -354,6 +360,17 @@ function Get-BuiltInProfileSpec {
                 Elevate     = $false
             }
         }
+        'Kali' {
+            return [pscustomobject]@{
+                Name        = 'Kali'
+                Guid        = '{1ef26d6d-0463-9d8a-d688-a26a34e97bfb}'
+                Icon        = (Join-Path $pic 'icons8-kali-linux-400.ico')
+                CommandLine = & $ssh '<KaliIP>'
+                TabTitle    = $null
+                Styled      = $true
+                Elevate     = $false
+            }
+        }
         'File Server' {
             return [pscustomobject]@{
                 Name        = 'File Server'
@@ -473,12 +490,14 @@ function Get-MinimalTerminalSettings {
 function Get-ProfileList {
     param($Settings)
     $list = [System.Collections.Generic.List[object]]::new()
-    if ($Settings.profiles -and $Settings.profiles.list) {
+    if ($Settings.profiles -and $null -ne $Settings.profiles.list) {
         foreach ($p in @($Settings.profiles.list)) {
             [void]$list.Add($p)
         }
     }
-    return $list
+    # Unary comma keeps List[object] intact. PowerShell 5.1 otherwise unrolls
+    # a one-item list into a PSCustomObject, and .ToArray() then fails.
+    return ,$list
 }
 
 function Find-Profile {
@@ -636,6 +655,7 @@ $scriptedValues = @{
     RD2         = $RD2
     RD3         = $RD3
     Payload     = $Payload
+    Kali        = $Kali
     FileServer  = $FileServer
     ExfilServer = $ExfilServer
 }
@@ -646,10 +666,10 @@ $hasProfileOverrides = @($CommandLine, $Guid, $Icon, $TabTitle) |
     Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
 
 if ($hasProfileOverrides -and -not $hasName -and -not $hasScriptedHosts) {
-    throw '-TeamServer, -RD1, -RD2, -RD3, -Payload, -FileServer, -ExfilServer, or -Name is required when using -CommandLine, -Guid, -Icon, or -TabTitle'
+    throw '-TeamServer, -RD1, -RD2, -RD3, -Payload, -Kali, -FileServer, -ExfilServer, or -Name is required when using -CommandLine, -Guid, -Icon, or -TabTitle'
 }
 if ($hasDestination -and -not $hasName -and -not $hasScriptedHosts) {
-    throw '-Name is required when passing a destination IP without -TeamServer, -RD1, -RD2, -RD3, -Payload, -FileServer, or -ExfilServer'
+    throw '-Name is required when passing a destination IP without -TeamServer, -RD1, -RD2, -RD3, -Payload, -Kali, -FileServer, or -ExfilServer'
 }
 
 $runMenu = $Interactive -or (-not $hasScriptedHosts -and -not $hasName)
@@ -670,7 +690,7 @@ if (-not $settings.profiles) {
 $profiles = Get-ProfileList -Settings $settings
 
 function Save-TerminalSettings {
-    $settings.profiles.list = @($profiles.ToArray())
+    $settings.profiles.list = @($profiles)
     $jsonOut = $settings | ConvertTo-Json -Depth 100
     $jsonOut = $jsonOut -replace '\\/', '/'
 

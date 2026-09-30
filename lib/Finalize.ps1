@@ -675,24 +675,12 @@ function Set-TerminalHostsProfileFunction {
 
 # BEGIN RedWindows Set-TerminalHosts
 function Set-TerminalHosts {
-    [CmdletBinding()]
-    param(
-        [string]`$TeamServer,
-        [string]`$RD1,
-        [string]`$RD2,
-        [string]`$RD3,
-        [string]`$Payload,
-        [string]`$FileServer,
-        [string]`$ExfilServer,
-        [switch]`$Interactive,
-        [Alias('h')][switch]`$Help
-    )
     `$scriptPath = '$($scriptPath.Replace("'", "''"))'
     if (-not (Test-Path -LiteralPath `$scriptPath)) {
         Write-Host "Set-TerminalHosts: script not found: `$scriptPath" -ForegroundColor Yellow
         return
     }
-    & `$scriptPath @PSBoundParameters
+    & `$scriptPath @args
 }
 # END RedWindows Set-TerminalHosts
 "@
@@ -711,17 +699,16 @@ function Set-TerminalHosts {
                 New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
             }
 
+            $existing = ''
             if (Test-Path -LiteralPath $profilePath) {
                 $existing = Get-Content -LiteralPath $profilePath -Raw
-                if ($existing -match '(?s)# BEGIN RedWindows Set-TerminalHosts.*?# END RedWindows Set-TerminalHosts') {
-                    $existing = [regex]::Replace($existing, '(?s)# BEGIN RedWindows Set-TerminalHosts.*?# END RedWindows Set-TerminalHosts\r?\n?', '')
-                    Set-Content -LiteralPath $profilePath -Value $existing.TrimEnd() -Encoding UTF8
-                } elseif ($existing -match '(?m)^function Set-TerminalHosts\b') {
-                    # Older wrapper without markers - leave it and append the new marked block.
-                }
+                if ($null -eq $existing) { $existing = '' }
+                $existing = [regex]::Replace($existing, '(?s)# BEGIN RedWindows Set-TerminalHosts.*?# END RedWindows Set-TerminalHosts\r?\n?', '')
+                # Drop the pre-marker wrapper (param list that blocked -Name).
+                $existing = [regex]::Replace($existing, '(?ms)^function Set-TerminalHosts\s*\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}\r?\n?', '')
             }
 
-            Add-Content -LiteralPath $profilePath -Value $funcDef -Encoding UTF8
+            Set-Content -LiteralPath $profilePath -Value (($existing.TrimEnd()) + $funcDef) -Encoding UTF8
             $updated++
         }
 
@@ -875,6 +862,7 @@ function Get-WindowsTerminalOwnedProfileNames {
         'RD2'
         'RD3'
         'Payload'
+        'Kali'
         'File Server'
         'Exfil Server'
         'Command Prompt Admin'
@@ -884,8 +872,17 @@ function Get-WindowsTerminalOwnedProfileNames {
 function Test-WindowsTerminalPlaceholderCommandLine {
     param([string]$CommandLine)
     if ([string]::IsNullOrWhiteSpace($CommandLine)) { return $true }
-    return $CommandLine -match '<(TeamServer|RD[123]|Payload)IP>' -or
+    return $CommandLine -match '<(TeamServer|RD[123]|Payload|Kali)IP>' -or
         $CommandLine -match 'domain_of_file_(exfil_)?server\.com'
+}
+
+function Get-WindowsTerminalUbuntuIcon {
+    param([string]$PicturesDir)
+    foreach ($name in @('linux.ico', 'ubuntu.ico', 'ubuntu.png')) {
+        $path = Join-Path $PicturesDir $name
+        if (Test-Path -LiteralPath $path) { return $path }
+    }
+    return (Join-Path $PicturesDir 'linux.ico')
 }
 
 function ConvertTo-WindowsTerminalJson {
@@ -900,7 +897,7 @@ function Update-WindowsTerminalUbuntuProfiles {
         [object[]]$List,
         [string]$PicturesDir
     )
-    $icon = Join-Path $PicturesDir 'ubuntu.png'
+    $icon = Get-WindowsTerminalUbuntuIcon -PicturesDir $PicturesDir
     foreach ($p in $List) {
         $source = [string]$p.source
         $name = [string]$p.name
@@ -980,7 +977,7 @@ function Get-WindowsTerminalWslProfileJson {
                 "commandline": "wsl.exe -d $distro",
                 "guid": "{58ad8b0c-3ef8-5f4d-87d3-6bf403d3a4f8}",
                 "hidden": false,
-                "icon": "__PICTURES__\\ubuntu.png",
+                "icon": "__PICTURES__\\linux.ico",
                 "name": "$distro",
                 "startingDirectory": "~"
             }
@@ -1091,6 +1088,16 @@ function Set-WindowsTerminalConfig {
                 Copy-Item -LiteralPath $hostsSrc -Destination $hostsDst -Force
             }
             Write-Status "[+] [Windows Terminal] helper -> $hostsDst" 'Green'
+        }
+
+        if (Test-Path -LiteralPath $settingsPath) {
+            $live = Get-Content -LiteralPath $settingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($live.profiles -and $live.profiles.list) {
+                $liveList = @($live.profiles.list)
+                Update-WindowsTerminalUbuntuProfiles -List $liveList -PicturesDir $picturesDir
+                $live.profiles.list = $liveList
+                Set-Content -LiteralPath $settingsPath -Value (ConvertTo-WindowsTerminalJson $live) -Encoding UTF8 -Force
+            }
         }
 
         Add-Result -Name 'Windows Terminal' -Status Installed -Detail $settingsPath

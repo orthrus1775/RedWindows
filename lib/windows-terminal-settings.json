@@ -142,6 +142,29 @@
                 "antialiasingMode": "grayscale",
                 "closeOnExit": "automatic",
                 "colorScheme": "Campbell",
+                "commandline": "ssh -i __SSH_KEY__ attacker@<KaliIP>",
+                "cursorShape": "bar",
+                "elevate": false,
+                "font":
+                {
+                    "face": "Cascadia Mono",
+                    "size": 12
+                },
+                "guid": "{1ef26d6d-0463-9d8a-d688-a26a34e97bfb}",
+                "hidden": false,
+                "historySize": 9001,
+                "icon": "__PICTURES__\\icons8-kali-linux-400.ico",
+                "name": "Kali",
+                "padding": "8, 8, 8, 8",
+                "snapOnInput": true,
+                "startingDirectory": "%USERPROFILE%",
+                "useAcrylic": false
+            },
+            {
+                "altGrAliasing": true,
+                "antialiasingMode": "grayscale",
+                "closeOnExit": "automatic",
+                "colorScheme": "Campbell",
                 "commandline": "powershell.exe -NoExit -Command \"& 'C:\\Program Files\\Mozilla Firefox\\firefox.exe' https://domain_of_file_server.com\"",
                 "cursorShape": "bar",
                 "font":

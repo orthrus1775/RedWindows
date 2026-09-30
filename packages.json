@@ -1625,6 +1625,18 @@
       ]
     },
     {
+      "name": "BTR_CLI",
+      "category": "native",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "native",
+          "repo": "Dump-GUY/BTR_CLI",
+          "slnPath": "BTR_CLI\\BTR_CLI.vcxproj"
+        }
+      ]
+    },
+    {
       "name": "RedTeamGrimoire",
       "category": "native",
       "enabled": true,
@@ -1970,6 +1982,28 @@
         {
           "type": "clone",
           "repo": "mgeeky/Stracciatella"
+        }
+      ]
+    },
+    {
+      "name": "PixelCode-Attack",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "S3N4T0R-0X0/PixelCode-Attack"
+        }
+      ]
+    },
+        {
+      "name": "DFMI",
+      "category": "misc",
+      "enabled": true,
+      "tiers": [
+        {
+          "type": "clone",
+          "repo": "ccelikanil/DFMI"
         }
       ]
     },

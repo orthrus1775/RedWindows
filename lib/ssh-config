@@ -45,3 +45,11 @@ Host exfil
      ServerAliveInterval 30
      ServerAliveCountMax 3
      PubkeyAuthentication yes
+
+Host kali
+     HostName 30.30.30.35
+     User attacker
+     IdentityFile ~/.ssh/id_ed25519
+     ServerAliveInterval 30
+     ServerAliveCountMax 3
+     PubkeyAuthentication yes
